@@ -73,7 +73,7 @@ const summarize = (text) =>
     .filter((part) => !part.includes('{'))
     .join(' | ') || '(empty)';
 
-const profile = await mkdtemp(path.join(tmpdir(), 'eip-helper-e2e-'));
+const profile = await mkdtemp(path.join(tmpdir(), 'eipeek-e2e-'));
 
 const COMMON_ARGS = [
   '--no-first-run',

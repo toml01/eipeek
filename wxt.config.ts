@@ -3,7 +3,7 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   srcDir: 'src',
   manifest: {
-    name: 'EIP Helper',
+    name: 'EIPeek',
     description:
       'Highlights EIP/ERC references on any page. Hover for the full title, status, and links to the spec, discussion, and source.',
     // storage is the ONLY permission. No host permissions, no tabs, no
@@ -17,7 +17,7 @@ export default defineConfig({
     // chrome://extensions still reaches the same form.
     action: {
       default_popup: 'popup.html',
-      default_title: 'EIP Helper — settings',
+      default_title: 'EIPeek — settings',
     },
   },
 });
