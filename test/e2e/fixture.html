@@ -109,6 +109,22 @@
     <!-- 9999 is not a proposal; used for the debug-mode miss card. -->
     <p id="debug-miss">A number that is not a proposal at all: 9999.</p>
 
+    <!--
+      Adjacent posts in a feed, which is why bare-number matching unlocks per
+      block rather than per page. The first earns it with an explicit reference;
+      the second must stay locked even though its neighbour qualified (1023 is
+      not a proposal, but 4337 and 8141 are); the third earns it on Ethereum
+      vocabulary alone, with no prefix anywhere.
+    -->
+    <div id="feed">
+      <article id="post-eth">EIP-7702 shipped; 4337 bundlers still matter.</article>
+      <article id="post-noise">Final score 1023 to 4337 across the season, a record 8141 attendance</article>
+      <article id="post-vocab">
+        just opened a proposal to enable native rollups via STARK-carrying frame
+        transactions (8141 + 8288)
+      </article>
+    </div>
+
     <div id="late"></div>
     <script>
       // Simulates client-side rendering, to check the MutationObserver rescan.

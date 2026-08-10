@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { findMatches, isEthContext, bareLooksLikeProposal, parseSelection } from '../src/core/match';
-import { VALID_NUMBERS } from '../src/core/numbers.generated';
+import {
+  bareLooksLikeProposal,
+  blockAllowsBare,
+  countEthTerms,
+  findMatches,
+  isEthHost,
+  parseSelection,
+} from '../src/core/match';
+import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../src/core/numbers.generated';
 
 const valid = new Set(VALID_NUMBERS);
 const isValid = (n: number) => valid.has(n);
@@ -183,21 +190,103 @@ describe('bareLooksLikeProposal', () => {
   });
 });
 
-describe('isEthContext', () => {
-  it('trusts known hosts with no prior match', () => {
-    expect(isEthContext('eips.ethereum.org', false)).toBe(true);
-    expect(isEthContext('ethereum-magicians.org', false)).toBe(true);
-    expect(isEthContext('www.ethresear.ch', false)).toBe(true);
-    expect(isEthContext('notes.ethereum.org', false)).toBe(true);
+describe('isEthHost', () => {
+  it('trusts known hosts', () => {
+    expect(isEthHost('eips.ethereum.org')).toBe(true);
+    expect(isEthHost('ethereum-magicians.org')).toBe(true);
+    expect(isEthHost('www.ethresear.ch')).toBe(true);
+    expect(isEthHost('notes.ethereum.org')).toBe(true);
   });
 
-  it('requires a prior explicit match on unknown hosts', () => {
-    expect(isEthContext('news.ycombinator.com', false)).toBe(false);
-    expect(isEthContext('news.ycombinator.com', true)).toBe(true);
+  it('leaves unknown hosts to the per-block gate', () => {
+    expect(isEthHost('news.ycombinator.com')).toBe(false);
+    expect(isEthHost('x.com')).toBe(false);
   });
 
   it('is not fooled by a lookalike host', () => {
-    expect(isEthContext('ethereum.org.evil.com', false)).toBe(false);
+    expect(isEthHost('ethereum.org.evil.com')).toBe(false);
+  });
+});
+
+describe('Tier 2 — the per-block gate', () => {
+  // Mirrors how the content script wires it: every block of text is judged on
+  // its own, so a test string stands in for one segment.
+  const anyTier = new Set([...VALID_NUMBERS, ...UNMERGED_NUMBERS]);
+  const gated = (text: string) =>
+    findMatches(text, { isValid: (n) => anyTier.has(n), allowBare: blockAllowsBare(text) }).map(
+      (m) => m.n,
+    );
+
+  const TWEET =
+    'just opened a proposal to enable native rollups via STARK-carrying frame ' +
+    'transactions (8141 + 8288)';
+
+  it('unlocks a block written entirely in bare numbers, on vocabulary alone', () => {
+    // The case the old page-wide gate could never reach: x.com is not a trusted
+    // host and the post has no prefixed reference, yet both numbers are real.
+    expect(countEthTerms(TWEET)).toBeGreaterThanOrEqual(2);
+    expect(gated(TWEET)).toEqual([8141, 8288]);
+  });
+
+  it('unlocks on two terms', () => {
+    expect(countEthTerms('gas limit bump to 8141 in the next fork')).toBe(2);
+    expect(gated('gas limit bump to 8141 in the next fork')).toEqual([8141]);
+  });
+
+  it('stays locked on one term, which is reachable by coincidence', () => {
+    expect(countEthTerms('a fork at 8141')).toBe(1);
+    expect(gated('a fork at 8141')).toEqual([]);
+  });
+
+  it('lets a prefixed reference unlock the bare numbers beside it', () => {
+    expect(gated('EIP-7702 shipped; 4337 bundlers still matter.')).toEqual([7702, 4337]);
+  });
+
+  it('does not let one block unlock the block next to it', () => {
+    // The regression that matters most. The gate used to ask whether the PAGE
+    // contained a prefixed reference, so one post mentioning EIP-7702 unlocked
+    // every unrelated post in the same timeline.
+    const feed = [
+      'EIP-7702 shipped; 4337 bundlers still matter.',
+      'Final score 1023 to 4337 across the season, a record 8141 attendance',
+    ];
+    expect(feed.map(gated)).toEqual([[7702, 4337], []]);
+  });
+
+  describe('ordinary prose carrying 4-digit numbers stays locked', () => {
+    it.each([
+      'The RTX 4090 beats the 3080 and costs 1599 dollars at retail',
+      'Our endpoint returns 8141 records per page with a 4096 byte limit',
+      'Final score 1023 to 4337 across the season, a record 8141 attendance',
+      'The company laid off 4337 staff and raised 8141 million in funding',
+      'Bind to 8141 and forward 8288 through the proxy',
+    ])('scores zero on %j', (text) => {
+      expect(countEthTerms(text)).toBe(0);
+      expect(blockAllowsBare(text)).toBe(false);
+      expect(gated(text)).toEqual([]);
+    });
+  });
+
+  it('accepts the terse-block tradeoff, which selection lookup covers', () => {
+    expect(gated('thoughts on 8141?')).toEqual([]);
+    expect(parseSelection('8141')!.n).toBe(8141);
+  });
+
+  describe('countEthTerms', () => {
+    it('counts distinct terms, so repetition is not extra evidence', () => {
+      expect(countEthTerms('gas gas gas')).toBe(1);
+    });
+
+    it('folds plurals into the singular', () => {
+      expect(countEthTerms('rollups and transactions')).toBe(2);
+      expect(countEthTerms('rollup rollups')).toBe(1);
+    });
+
+    it('is case-insensitive and respects word boundaries', () => {
+      expect(countEthTerms('EVM opcodes')).toBe(2);
+      expect(countEthTerms('the ethereal tx')).toBe(1);
+      expect(countEthTerms('Prometheus and sethereum')).toBe(0);
+    });
   });
 });
 
