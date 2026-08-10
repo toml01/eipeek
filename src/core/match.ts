@@ -9,7 +9,9 @@
  *   Tier 2  bare numbers ("7702"). Opt-in and heavily gated, because the
  *           number space overlaps ordinary prose badly: 34 proposals are
  *           plausible years (including 2015, 2019-2021, 2025, 2026) and 91
- *           are under 1000 (1, 2, 20, 100, 150, 999...).
+ *           are under 1000 (1, 2, 20, 100, 150, 999...). Its context gate is
+ *           per block of text (`blockAllowsBare`), not per page -- a feed is
+ *           one page holding many unrelated blocks.
  */
 import type { Match } from './types';
 
@@ -65,20 +67,81 @@ const HOSTS = [
 ];
 
 /**
- * Whether bare numbers are plausible on this page at all. Either the host is
- * one where proposal numbers are the dominant meaning of a 4-digit number, or
- * the page has already proven itself by containing an explicit reference.
+ * Site-level trust: hosts where a proposal number is the dominant meaning of a
+ * 4-digit number, so bare matching needs no evidence from the text itself.
+ * Deliberately the only page-wide part of the Tier 2 gate.
  */
-export function isEthContext(hostname: string, hasPrefixedMatch: boolean): boolean {
-  if (hasPrefixedMatch) return true;
+export function isEthHost(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^www\./, '');
   return HOSTS.some((allowed) => h === allowed || h.endsWith(`.${allowed}`));
+}
+
+/**
+ * Ethereum vocabulary, used to judge one block of text on its own. Listed
+ * singular; the regex allows a trailing plural, so "rollups" and "transactions"
+ * count without a second entry.
+ */
+const ETH_TERMS = [
+  'eip', 'erc', 'rip', 'ethereum', 'eth', 'evm', 'opcode', 'precompile',
+  'rollup', 'l1', 'l2', 'mainnet', 'testnet', 'hardfork', 'fork', 'upgrade',
+  'proposal', 'spec', 'gas', 'calldata', 'blob', 'stark', 'snark', 'zk',
+  'validator', 'staking', 'consensus', 'mempool', 'nonce', 'eoa', 'solidity',
+  'abi', 'devnet', 'beacon', 'slot', 'epoch', 'tx', 'transaction', 'account',
+  'abstraction', 'bundler', 'paymaster', 'signature', 'semantics', 'registry',
+  'glamsterdam', 'pectra', 'fusaka',
+];
+
+/** The capture group excludes the plural, so counting keys on the term itself. */
+const ETH_TERM = new RegExp(`\\b(${ETH_TERMS.join('|')})s?\\b`, 'gi');
+
+/**
+ * Distinct terms a block needs before a bare number is plausible in it.
+ *
+ * Two, because one is reachable by coincidence -- "fork" in a recipe, "account"
+ * in a bank statement -- while two separates cleanly in practice: "gas limit
+ * bump to 8141 in the next fork" scores 2, and prose that merely contains
+ * 4-digit numbers ("returns 8141 records per page", "raised 8141 million in
+ * funding", "the RTX 4090 beats the 3080") scores 0.
+ */
+const ETH_TERM_MIN = 2;
+
+/** Non-global copy, so `test` carries no lastIndex state. */
+const HAS_PREFIX = new RegExp(PREFIXED.source, 'i');
+
+/** Distinct Ethereum terms in a block of text, plurals folded into the singular. */
+export function countEthTerms(text: string): number {
+  const seen = new Set<string>();
+  ETH_TERM.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ETH_TERM.exec(text)) !== null) seen.add(m[1]!.toLowerCase());
+  return seen.size;
+}
+
+/**
+ * Whether one block of text has earned bare-number matching.
+ *
+ * Per block rather than per page, because a page-wide signal is wrong in both
+ * directions on a feed: one post mentioning EIP-7702 would unlock every
+ * unrelated post beside it, while a post writing only bare numbers would never
+ * unlock at all.
+ *
+ * Evidence is either an explicit prefixed reference in the same block, or
+ * enough Ethereum vocabulary that a 4-5 digit number is likelier a proposal
+ * than a year, a port, or a quantity. Terse blocks lose out -- "thoughts on
+ * 8141?" scores 0 -- which is what the selection lookup exists for.
+ */
+export function blockAllowsBare(text: string): boolean {
+  return HAS_PREFIX.test(text) || countEthTerms(text) >= ETH_TERM_MIN;
 }
 
 export interface FindOptions {
   /** Rejects any number not in the dataset. */
   isValid: (n: number) => boolean;
-  /** Enables Tier 2. Requires both the user setting and page context. */
+  /**
+   * Enables Tier 2 for this text. Requires the user setting plus either a
+   * trusted host (`isEthHost`) or block-local evidence (`blockAllowsBare`);
+   * the caller composes those, since only it knows the hostname.
+   */
   allowBare?: boolean;
 }
 

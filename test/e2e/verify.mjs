@@ -570,6 +570,34 @@ try {
   await setSetting({ debugMode: false });
   await clearSelection();
 
+  // --- 7e. bare numbers unlock per block, not per page ------------------
+  // The regression this guards: the gate used to ask whether the PAGE held a
+  // prefixed reference, so one Ethereum post unlocked every unrelated post
+  // beside it, while a post written only in bare numbers never unlocked at all.
+  await setSetting({ bareNumbers: true });
+  await waitFor(async () => (await scoped('#post-vocab')).length > 0, 6000);
+
+  const postEth = await scoped('#post-eth');
+  const postNoise = await scoped('#post-noise');
+  const postVocab = await scoped('#post-vocab');
+  check('a prefixed post unlocks its own bare number', postEth.includes('4337'), JSON.stringify(postEth));
+  check(
+    'the post beside it stays locked',
+    postNoise.length === 0,
+    JSON.stringify(postNoise),
+  );
+  check(
+    'Ethereum vocabulary unlocks a post with no prefix',
+    postVocab.includes('8141') && postVocab.includes('8288'),
+    JSON.stringify(postVocab),
+  );
+  // The terse-block tradeoff, live: no vocabulary, so no unlock even with the
+  // setting on. Selecting the number is the way in -- checked in 7c.
+  check('a block with no evidence stays locked', (await scoped('#bare')).length === 0);
+
+  await setSetting({ bareNumbers: false });
+  check('turning bare numbers off relocks the post', (await scoped('#post-vocab')).length === 0);
+
   // --- 8. rescan after client-side render ------------------------------
   await page.evaluate(() => window.addLate());
   // Poll: a rescan is debounced then run in an idle callback, so a fixed wait

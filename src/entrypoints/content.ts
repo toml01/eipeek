@@ -1,5 +1,5 @@
 import { classify, lookup, numberValidator } from '../core/dataset';
-import { findMatches, isEthContext, parseSelection } from '../core/match';
+import { blockAllowsBare, findMatches, isEthHost, parseSelection } from '../core/match';
 import { buildSegment, locate, partsCovering, type Segment } from '../core/segments';
 import { getSettings, isSiteEnabled, onSettingsChanged } from '../core/settings';
 import type { Match, Settings } from '../core/types';
@@ -86,12 +86,17 @@ async function start() {
     const segments = collectSegments(tooltip.hostElement);
     const isValid = numberValidator(settings.includeUnmerged);
 
-    // Tier 1 first, so "does this page discuss Ethereum at all?" is answered
-    // before deciding whether bare numbers are plausible here.
-    const firstPass = matchSegments(segments, false, isValid);
-    const allowBare =
-      settings.bareNumbers && isEthContext(location.hostname, firstPass.length > 0);
-    const found = allowBare ? matchSegments(segments, true, isValid) : firstPass;
+    // Tier 2 is decided per segment, i.e. per block of text. A page-wide signal
+    // is wrong in both directions on a feed: one post mentioning EIP-7702 would
+    // unlock every unrelated post beside it, and a post written entirely in bare
+    // numbers would never unlock. The host allowlist is the one page-wide part,
+    // because it is site-level trust rather than page content.
+    const trustedHost = isEthHost(location.hostname);
+    const found = matchSegments(
+      segments,
+      isValid,
+      (text) => settings.bareNumbers && (trustedHost || blockAllowsBare(text)),
+    );
 
     if (found.length === 0) {
       CSS.highlights.delete(HIGHLIGHT_NAME);
@@ -391,13 +396,21 @@ function collectSegments(tooltipHost: Element | null): Array<Segment<Text>> {
   return segments;
 }
 
+/**
+ * One pass over every segment. `allowBareIn` is asked per segment, so Tier 2 is
+ * gated by the block being matched rather than by anything found elsewhere on
+ * the page -- which is also why one pass is enough. (It used to take two: Tier 1
+ * everywhere to answer "is this page Ethereum-related?", then everything again
+ * with Tier 2 on.)
+ */
 function matchSegments(
   segments: Array<Segment<Text>>,
-  allowBare: boolean,
   isValid: (n: number) => boolean,
+  allowBareIn: (text: string) => boolean,
 ): Array<{ segment: Segment<Text>; match: Match }> {
   const out: Array<{ segment: Segment<Text>; match: Match }> = [];
   for (const segment of segments) {
+    const allowBare = allowBareIn(segment.text);
     for (const match of findMatches(segment.text, { isValid, allowBare })) {
       out.push({ segment, match });
     }
