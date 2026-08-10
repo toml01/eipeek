@@ -1,6 +1,6 @@
 # EIPeek
 
-[![CI](https://github.com/toml01/eip-helper/actions/workflows/ci.yml/badge.svg)](https://github.com/toml01/eip-helper/actions/workflows/ci.yml)
+[![CI](https://github.com/toml01/eipeek/actions/workflows/ci.yml/badge.svg)](https://github.com/toml01/eipeek/actions/workflows/ci.yml)
 
 A Chrome extension that annotates EIP/ERC references on any page. It highlights
 references like `EIP-7702` and, on hover, shows the full title, status, and links
