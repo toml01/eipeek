@@ -23,6 +23,9 @@ npm run build
 Then load `.output/chrome-mv3` via `chrome://extensions` → Developer mode →
 **Load unpacked**.
 
+Click the toolbar icon for the settings. The popup and the options page render the
+same form from `src/ui/settings-form.ts`, so there is one copy of it.
+
 ## How it works
 
 ### Highlighting without touching the page
@@ -94,8 +97,10 @@ A page saying "back in 2020" or "150 users" would light up. So when enabled, a
 bare number must clear every one of these:
 
 - 4–5 digits (removes the 91 proposals under 1000)
-- the page looks Ethereum-related — a known host, or the page already contains
-  an explicit prefixed reference
+- **the same text block** looks Ethereum-related — it holds a prefixed reference,
+  or at least two Ethereum terms (`rollup`, `L1`, `gas`, `fork`, `STARK`…). Only
+  the host allowlist is page-wide; content evidence is block-local, because a feed
+  is one page of unrelated blocks. See below.
 - not a year context (`in 2026`, `Q3 2026`, `March 2020`, `2024-2026`, `© 2026`)
 - not currency, a percentage, or a counted quantity (`$7702`, `7702%`, `7702 users`)
 - not part of a larger number (`1,7702`, `7702.5`, `77021`)
@@ -129,10 +134,9 @@ excludes newlines.) Block detection uses a static tag list rather than
 is far too expensive.
 
 There is deliberately **no "already a link, skip it" rule**. One existed to avoid
-double-decorating on eips.ethereum.org, but that site is disabled by default
-anyway, so the rule's only live effect was suppressing highlights on Google, Bing
-and GitHub — where a result title links to the spec but shows the reader nothing
-but a number, making the hover most valuable of all.
+double-decorating on eips.ethereum.org, but its only real effect was suppressing
+highlights on Google, Bing and GitHub — where a result title links to the spec but
+shows the reader nothing but a number, making the hover most valuable of all.
 
 One consequence: the per-node "skip text without digits" shortcut had to go, as
 the run holding `EIP` contains no digits at all. Measured cost is a few
@@ -187,12 +191,37 @@ has gone missing or if two proposals claim the same canonical number. An alias
 *overlapping* another proposal's number is fine — that is the contested case, and
 both get shown.
 
+### The bare-number gate is per block, not per page
+
+A page-wide "is there an `EIP-…` anywhere here?" test is wrong in both directions
+on a feed. One post mentioning EIP-7702 would unlock bare numbers for every
+unrelated post beside it, and a post writing only bare numbers would never unlock
+at all.
+
+So the content evidence is judged per text block. A block unlocks bare matching if
+it holds a prefixed reference, or at least **two distinct** Ethereum terms. Two,
+because one is reachable by coincidence — "fork" in a recipe, "account" in a bank
+statement. Measured distinct-term counts:
+
+| Block | Terms | Bare numbers |
+| --- | --- | --- |
+| "native rollups via STARK-carrying frame transactions (8141 + 8288)" | 4 | matched |
+| "gas limit bump to 8141 in the next fork" | 2 | matched |
+| "the RTX 4090 beats the 3080 and costs 1599 dollars" | 0 | ignored |
+| "returns 8141 records per page with a 4096 byte limit" | 0 | ignored |
+| "bind to 8141 and forward 8288 through the proxy" | 0 | ignored |
+
+The host allowlist stays page-wide, since that is site-level trust rather than
+evidence from the text.
+
+Terse blocks lose out: "thoughts on 8141?" scores 0 and stays locked. That is the
+deliberate tradeoff, and it is what the selection lookup below is for.
+
 ### Looking up a number you select
 
-Automatic bare-number matching has to stay conservative, so a reference written
-bare on a page with no other Ethereum signal is unreachable — a tweet reading
-*"frame transactions (8141 + 8288)"* gets nothing, because `x.com` is not a known
-host and the tweet has no prefixed reference to unlock the page.
+Automatic bare-number matching stays conservative, so a number in a block with no
+Ethereum signal at all is still unreachable — "thoughts on 8141?" carries nothing
+to judge it by, and bare matching is off by default regardless.
 
 Selecting the number fixes that. A selection that is *only* a reference —
 `8141`, `EIP-8141`, `#8141` — looks it up and skips every gate: no digit floor, no

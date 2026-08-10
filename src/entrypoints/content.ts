@@ -421,12 +421,11 @@ function matchSegments(
 
 /*
  * There is deliberately no "this is already a link to the spec, skip it" guard.
- * One existed to avoid double-decorating references on eips.ethereum.org, but
- * DEFAULT_SETTINGS.disabledSites already turns the extension off there entirely,
- * so its only live effect was suppressing highlights on Google, Bing and GitHub
- * search results -- precisely the pages where seeing a title on hover is most
- * useful. A Google result title links to the spec, which made it look "already
- * linked" while showing the reader nothing but the number.
+ * One existed to avoid double-decorating references on eips.ethereum.org, but its
+ * only real effect was suppressing highlights on Google, Bing and GitHub search
+ * results -- precisely the pages where seeing a title on hover is most useful. A
+ * result title there links to the spec, which made it look "already linked" while
+ * showing the reader nothing but the number.
  */
 
 function injectStyle(settings: Settings) {
