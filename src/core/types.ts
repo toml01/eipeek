@@ -96,7 +96,8 @@ export const DEFAULT_SETTINGS: Settings = {
   lookupOnSelection: true,
   debugMode: false,
   highlightStyle: 'underline',
-  // Redundant on the canonical site, which already renders every reference as
-  // a real link with a preview.
-  disabledSites: ['eips.ethereum.org', 'ercs.ethereum.org'],
+  // Nothing disabled. The canonical sites were pre-disabled here, on the
+  // grounds that they link every reference already -- but a link still shows
+  // only the number, and the title and status are what the tooltip adds.
+  disabledSites: [],
 };

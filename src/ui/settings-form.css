@@ -115,3 +115,22 @@ footer {
 a {
   color: var(--accent);
 }
+
+/*
+ * The toolbar popup. Chrome sizes it to the document and refuses to go past
+ * 800x600, so the form names its own width and caps its own height rather than
+ * running into that limit. The scroll container is <main>, not <body>: the root
+ * propagates body overflow to the viewport, so a scrollable body would leave
+ * the popup itself scrolling and the height cap doing nothing.
+ */
+body.popup {
+  width: 380px;
+  padding: 0;
+}
+
+body.popup main {
+  max-width: none;
+  max-height: 560px;
+  overflow-y: auto;
+  padding: 18px 16px;
+}
