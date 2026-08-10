@@ -60,11 +60,21 @@ export interface Match {
 export interface Settings {
   enabled: boolean;
   /**
-   * Match bare numbers with no EIP/ERC prefix. Off by default: 34 proposal
-   * numbers are plausible years (2015, 2020, 2025, 2026...) and 91 are under
-   * 1000, so unguarded bare matching lights up ordinary prose.
+   * Match bare numbers with no EIP/ERC prefix, unrestricted: any 1-5 digit
+   * number that is a real proposal. Off by default, and that default is what
+   * makes the looseness affordable -- 34 proposal numbers are plausible years
+   * and 8 are single digits, so "I have 3 apples" marks the 3. Someone who turns
+   * this on is asking for every candidate.
    */
   bareNumbers: boolean;
+  /**
+   * Alpha. Narrows `bareNumbers` back down to numbers that look like proposals
+   * *in context*: 4-5 digits, no year or currency or date shape, and a block of
+   * text that holds a prefixed reference or two Ethereum terms. Meaningless
+   * unless `bareNumbers` is on. Off by default, so the plain setting stays
+   * predictable and this stays the thing you opt into.
+   */
+  predictEthBlocks: boolean;
   /**
    * Resolve proposals that so far exist only in an open pull request. On by
    * default: numbers are assigned at PR-open time and discussion clusters in
@@ -87,11 +97,19 @@ export interface Settings {
   highlightStyle: 'underline' | 'background' | 'both';
   /** Hostnames the user has switched off. */
   disabledSites: string[];
+  /**
+   * Hostnames where bare numbers are never matched, while prefixed references
+   * still are. Not `disabledSites`: the site where unrestricted matching gets
+   * noisy -- a sports table, an issue tracker -- is usually still a site where
+   * an explicit `EIP-7702` is worth a tooltip.
+   */
+  bareNumberBlockedSites: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
   bareNumbers: false,
+  predictEthBlocks: false,
   includeUnmerged: true,
   lookupOnSelection: true,
   debugMode: false,
@@ -100,4 +118,5 @@ export const DEFAULT_SETTINGS: Settings = {
   // grounds that they link every reference already -- but a link still shows
   // only the number, and the title and status are what the tooltip adds.
   disabledSites: [],
+  bareNumberBlockedSites: [],
 };

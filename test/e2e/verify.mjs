@@ -570,32 +570,102 @@ try {
   await setSetting({ debugMode: false });
   await clearSelection();
 
-  // --- 7e. bare numbers unlock per block, not per page ------------------
+  // --- 7e. bare numbers, unrestricted -----------------------------------
+  // With `predictEthBlocks` off -- the default -- the setting itself is the only
+  // gate: every block matches, whatever it is about, down to single digits.
+  await setSetting({ bareNumbers: true, predictEthBlocks: false });
+  await waitFor(async () => (await scoped('#post-noise')).length > 0, 6000);
+
+  const loose = {
+    postNoise: await scoped('#post-noise'),
+    postVocab: await scoped('#post-vocab'),
+    bare: await scoped('#bare'),
+    small: await scoped('#small-bare'),
+    years: await scoped('#years'),
+    amounts: await scoped('#amounts'),
+    slug: await scoped('#slug'),
+  };
+  check(
+    'unrestricted: a block with no Ethereum words matches',
+    loose.postNoise.includes('4337') && loose.postNoise.includes('8141'),
+    JSON.stringify(loose.postNoise),
+  );
+  check(
+    'unrestricted: a lone bare number matches',
+    loose.bare.includes('7702'),
+    JSON.stringify(loose.bare),
+  );
+  check(
+    'unrestricted: numbers under 1000 match',
+    loose.small.includes('20') && loose.small.includes('7'),
+    JSON.stringify(loose.small),
+  );
+  check(
+    'unrestricted: a year that is a real proposal matches',
+    loose.years.includes('2025') && loose.years.includes('2026'),
+    JSON.stringify(loose.years),
+  );
+  check(
+    'unrestricted: a currency amount matches',
+    loose.amounts.includes('7702'),
+    JSON.stringify(loose.amounts),
+  );
+  // The structural checks are the ones that survive: the slug's 7702 is a whole
+  // number and matches, while 0x7702 in the same block never can.
+  check(
+    'unrestricted: a hyphenated slug matches but hex does not',
+    loose.slug.length === 1 && loose.slug[0] === '7702',
+    JSON.stringify(loose.slug),
+  );
+
+  // --- 7e2. predictEthBlocks: the per-block gate, restored --------------
   // The regression this guards: the gate used to ask whether the PAGE held a
   // prefixed reference, so one Ethereum post unlocked every unrelated post
   // beside it, while a post written only in bare numbers never unlocked at all.
-  await setSetting({ bareNumbers: true });
-  await waitFor(async () => (await scoped('#post-vocab')).length > 0, 6000);
+  await setSetting({ predictEthBlocks: true });
+  await waitFor(async () => (await scoped('#post-noise')).length === 0, 6000);
 
   const postEth = await scoped('#post-eth');
   const postNoise = await scoped('#post-noise');
   const postVocab = await scoped('#post-vocab');
-  check('a prefixed post unlocks its own bare number', postEth.includes('4337'), JSON.stringify(postEth));
+  check('alpha: a prefixed post unlocks its own bare number', postEth.includes('4337'), JSON.stringify(postEth));
   check(
-    'the post beside it stays locked',
+    'alpha: the post beside it stays locked',
     postNoise.length === 0,
     JSON.stringify(postNoise),
   );
   check(
-    'Ethereum vocabulary unlocks a post with no prefix',
+    'alpha: Ethereum vocabulary unlocks a post with no prefix',
     postVocab.includes('8141') && postVocab.includes('8288'),
     JSON.stringify(postVocab),
   );
   // The terse-block tradeoff, live: no vocabulary, so no unlock even with the
   // setting on. Selecting the number is the way in -- checked in 7c.
-  check('a block with no evidence stays locked', (await scoped('#bare')).length === 0);
+  check('alpha: a block with no evidence stays locked', (await scoped('#bare')).length === 0);
+  check(
+    'alpha: the meaning filters are back',
+    (await scoped('#years')).length === 0 && (await scoped('#amounts')).length === 0,
+    JSON.stringify([await scoped('#years'), await scoped('#amounts')]),
+  );
+  check('alpha: the digit floor is back', (await scoped('#small-bare')).length === 0);
 
-  await setSetting({ bareNumbers: false });
+  // --- 7e3. the bare-number site blacklist ------------------------------
+  // Not `disabledSites`: only the guessing stops, prefixed references stay.
+  await setSetting({ predictEthBlocks: false, bareNumberBlockedSites: ['127.0.0.1'] });
+  // Waits on something that actually changes: in alpha mode #post-eth held its
+  // prefixed reference *and* the bare 4337 beside it, and now keeps only the first.
+  await waitFor(async () => (await scoped('#post-eth')).length === 1, 6000);
+  check(
+    'a blacklisted site matches no bare numbers',
+    (await scoped('#post-noise')).length === 0 && (await scoped('#bare')).length === 0,
+  );
+  check(
+    'a blacklisted site still matches prefixed references',
+    (await scoped('#prefixed')).includes('EIP-7702'),
+    JSON.stringify(await scoped('#prefixed')),
+  );
+
+  await setSetting({ bareNumberBlockedSites: [], bareNumbers: false });
   check('turning bare numbers off relocks the post', (await scoped('#post-vocab')).length === 0);
 
   // --- 8. rescan after client-side render ------------------------------

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bareIsWholeNumber,
   bareLooksLikeProposal,
   blockAllowsBare,
   countEthTerms,
   findMatches,
-  isEthHost,
   parseSelection,
 } from '../src/core/match';
 import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../src/core/numbers.generated';
@@ -17,6 +17,10 @@ const nums = (text: string, allowBare = false) =>
 
 const texts = (text: string, allowBare = false) =>
   findMatches(text, { isValid, allowBare }).map((m) => m.text);
+
+/** Bare matching under the `predictEthBlocks` alpha setting. */
+const strict = (text: string) =>
+  findMatches(text, { isValid, allowBare: true, strictBare: true }).map((m) => m.n);
 
 describe('Tier 1 — prefixed references', () => {
   it.each([
@@ -109,7 +113,7 @@ describe('Tier 1 — list continuations', () => {
   });
 });
 
-describe('Tier 2 — bare numbers', () => {
+describe('Tier 2 — bare numbers, unrestricted', () => {
   it('is off unless explicitly allowed', () => {
     expect(nums('7702 changes EOAs')).toEqual([]);
   });
@@ -119,55 +123,46 @@ describe('Tier 2 — bare numbers', () => {
     expect(nums('4337 bundlers', true)).toEqual([4337]);
   });
 
-  it('never matches numbers under 1000, the noisiest range', () => {
-    // 20, 150 and 999 are all real proposals but hopeless as bare matches.
-    expect(nums('20 items', true)).toEqual([]);
-    expect(nums('150 users online', true)).toEqual([]);
-    expect(nums('999 problems', true)).toEqual([]);
+  it('matches numbers under 1000, including single digits', () => {
+    // The scale change: EIPs 1-8, 20, 55, 67 and 86 exist, so ordinary counts
+    // get marked. Accepted, because the setting is off by default.
+    expect(nums('20 items', true)).toEqual([20]);
+    expect(nums('150 users online', true)).toEqual([150]);
+    expect(nums('999 problems', true)).toEqual([999]);
+    expect(nums('I have 3 apples', true)).toEqual([3]);
+    expect(nums('7', true)).toEqual([7]);
   });
 
-  it('never matches year-shaped numbers, even though they are real proposals', () => {
-    // 2015, 2020, 2025 and 2026 are all real proposal numbers.
-    for (const year of ['2015', '2019', '2020', '2021', '2025', '2026']) {
-      expect(nums(`back in ${year} things changed`, true)).toEqual([]);
-      expect(nums(`${year} was a good year`, true)).toEqual([]);
-    }
+  it('matches year-shaped numbers that are real proposals', () => {
+    expect(nums('2025', true)).toEqual([2025]);
+    expect(nums('back in 2025 things changed', true)).toEqual([2025]);
+    expect(nums('© 2026 Foundation', true)).toEqual([2026]);
+    // 2024 is not a proposal, so it stays unmarked whatever the mode.
+    expect(nums('back in 2024 things changed', true)).toEqual([]);
   });
 
-  it('rejects year contexts and ranges', () => {
-    expect(nums('since 2020', true)).toEqual([]);
-    expect(nums('Q3 2026 roadmap', true)).toEqual([]);
-    expect(nums('the 2024-2026 period', true)).toEqual([]);
-    expect(nums('March 2020 update', true)).toEqual([]);
-    expect(nums('© 2026 Foundation', true)).toEqual([]);
+  it('matches in currency, percentage and quantity contexts', () => {
+    expect(nums('$7702 raised', true)).toEqual([7702]);
+    expect(nums('7702 users', true)).toEqual([7702]);
+    expect(nums('7702%', true)).toEqual([7702]);
   });
 
-  it('rejects currency and quantities', () => {
-    expect(nums('$7702 raised', true)).toEqual([]);
-    expect(nums('7702 USD', true)).toEqual([]);
-    expect(nums('7702 users', true)).toEqual([]);
-    expect(nums('7702 blocks', true)).toEqual([]);
-    expect(nums('7702%', true)).toEqual([]);
+  it('matches in date and identifier shapes, which are only wrong by meaning', () => {
+    expect(nums('2024/7702', true)).toEqual([7702]);
+    expect(nums('build-7702-rc1', true)).toEqual([7702]);
+    // The reference the old slug rule threw away.
+    expect(nums('pre-7702 behaviour', true)).toEqual([7702]);
   });
 
-  it('rejects numbers that are part of a larger number', () => {
-    expect(nums('1,7702', true)).toEqual([]);
-    expect(nums('3.7702', true)).toEqual([]);
-    expect(nums('7702.5', true)).toEqual([]);
-    expect(nums('77021', true)).toEqual([]);
-    expect(nums('1234567702', true)).toEqual([]);
+  it('needs no Ethereum vocabulary in the block', () => {
+    const post = 'Final score 1023 to 4337, a record 8141 attendance';
+    expect(countEthTerms(post)).toBe(0);
+    // 1023 is not a proposal; 4337 and 8141 are.
+    expect(nums(post, true)).toEqual([4337, 8141]);
   });
 
-  it('rejects hex and identifiers by word boundary', () => {
-    expect(nums('0x7702', true)).toEqual([]);
-    expect(nums('0xdeadbeef7702', true)).toEqual([]);
-    expect(nums('v7702', true)).toEqual([]);
-    expect(nums('build-7702-rc1', true)).toEqual([]);
-  });
-
-  it('rejects date shapes', () => {
-    expect(nums('2024/7702', true)).toEqual([]);
-    expect(nums('7702/2024', true)).toEqual([]);
+  it('still rejects numbers that are not real proposals', () => {
+    expect(nums('1023 seats and 4090 cards', true)).toEqual([]);
   });
 
   it('does not double-report a number already matched with a prefix', () => {
@@ -175,6 +170,87 @@ describe('Tier 2 — bare numbers', () => {
     // The prefixed match and the continuation each count once -- no third
     // bare match overlapping the same characters.
     expect(findMatches('EIP-7702', { isValid, allowBare: true })).toHaveLength(1);
+  });
+});
+
+describe('Tier 2 — structural checks, which apply in both modes', () => {
+  // These are not guesses about meaning: they decide which number the text
+  // holds, so dropping them would highlight a number nobody wrote.
+  const cases: Array<[string, number[]]> = [
+    ['77021', []],
+    ['1,7702', []],
+    ['3.7702', []],
+    ['7702.5', []],
+    ['1234567702', []],
+    ['0x7702', []],
+    ['0xdeadbeef7702', []],
+    ['v7702', []],
+    ['7702x', []],
+    // The digits either side of a thousands separator are both fragments.
+    ['17,702', []],
+    // A hyphen joins nothing, so both numbers here are whole.
+    ['7702-7710', [7702, 7710]],
+  ];
+
+  it.each(cases)('reads %j as %j in unrestricted mode', (text, expected) => {
+    expect(nums(text, true)).toEqual(expected);
+  });
+
+  it.each(cases.filter(([, expected]) => expected.length === 0))(
+    'also rejects %j in alpha mode',
+    (text) => {
+      expect(strict(text)).toEqual([]);
+    },
+  );
+
+  it('accepts a whole number and rejects a fragment', () => {
+    expect(bareIsWholeNumber('the 7702 model', 4, 8)).toBe(true);
+    expect(bareIsWholeNumber('1,7702', 2, 6)).toBe(false);
+    expect(bareIsWholeNumber('7702.5', 0, 4)).toBe(false);
+  });
+});
+
+describe('Tier 2 — predictEthBlocks (alpha)', () => {
+  it('never matches numbers under 1000, the noisiest range', () => {
+    // 20, 150 and 999 are all real proposals but hopeless as bare matches.
+    expect(strict('20 items')).toEqual([]);
+    expect(strict('150 users online')).toEqual([]);
+    expect(strict('999 problems')).toEqual([]);
+  });
+
+  it('never matches year-shaped numbers, even though they are real proposals', () => {
+    // 2015, 2020, 2025 and 2026 are all real proposal numbers.
+    for (const year of ['2015', '2019', '2020', '2021', '2025', '2026']) {
+      expect(strict(`back in ${year} things changed`)).toEqual([]);
+      expect(strict(`${year} was a good year`)).toEqual([]);
+    }
+  });
+
+  it('rejects year contexts and ranges', () => {
+    expect(strict('since 2020')).toEqual([]);
+    expect(strict('Q3 2026 roadmap')).toEqual([]);
+    expect(strict('the 2024-2026 period')).toEqual([]);
+    expect(strict('March 2020 update')).toEqual([]);
+    expect(strict('© 2026 Foundation')).toEqual([]);
+  });
+
+  it('rejects currency and quantities', () => {
+    expect(strict('$7702 raised')).toEqual([]);
+    expect(strict('7702 USD')).toEqual([]);
+    expect(strict('7702 users')).toEqual([]);
+    expect(strict('7702 blocks')).toEqual([]);
+    expect(strict('7702%')).toEqual([]);
+  });
+
+  it('rejects hyphenated identifiers and date shapes', () => {
+    expect(strict('build-7702-rc1')).toEqual([]);
+    expect(strict('pre-7702 behaviour')).toEqual([]);
+    expect(strict('2024/7702')).toEqual([]);
+    expect(strict('7702/2024')).toEqual([]);
+  });
+
+  it('still matches a plausible bare reference', () => {
+    expect(strict('7702 changes EOAs')).toEqual([7702]);
   });
 });
 
@@ -190,32 +266,20 @@ describe('bareLooksLikeProposal', () => {
   });
 });
 
-describe('isEthHost', () => {
-  it('trusts known hosts', () => {
-    expect(isEthHost('eips.ethereum.org')).toBe(true);
-    expect(isEthHost('ethereum-magicians.org')).toBe(true);
-    expect(isEthHost('www.ethresear.ch')).toBe(true);
-    expect(isEthHost('notes.ethereum.org')).toBe(true);
-  });
-
-  it('leaves unknown hosts to the per-block gate', () => {
-    expect(isEthHost('news.ycombinator.com')).toBe(false);
-    expect(isEthHost('x.com')).toBe(false);
-  });
-
-  it('is not fooled by a lookalike host', () => {
-    expect(isEthHost('ethereum.org.evil.com')).toBe(false);
-  });
-});
-
-describe('Tier 2 — the per-block gate', () => {
-  // Mirrors how the content script wires it: every block of text is judged on
-  // its own, so a test string stands in for one segment.
+describe('Tier 2 — the per-block gate (alpha)', () => {
+  // Mirrors how the content script wires it under `predictEthBlocks`: every block
+  // of text is judged on its own, so a test string stands in for one segment.
   const anyTier = new Set([...VALID_NUMBERS, ...UNMERGED_NUMBERS]);
   const gated = (text: string) =>
-    findMatches(text, { isValid: (n) => anyTier.has(n), allowBare: blockAllowsBare(text) }).map(
-      (m) => m.n,
-    );
+    findMatches(text, {
+      isValid: (n) => anyTier.has(n),
+      allowBare: blockAllowsBare(text),
+      strictBare: true,
+    }).map((m) => m.n);
+
+  /** The same text with the gate off, i.e. what the default mode does with it. */
+  const ungated = (text: string) =>
+    findMatches(text, { isValid: (n) => anyTier.has(n), allowBare: true }).map((m) => m.n);
 
   const TWEET =
     'just opened a proposal to enable native rollups via STARK-carrying frame ' +
@@ -236,6 +300,8 @@ describe('Tier 2 — the per-block gate', () => {
   it('stays locked on one term, which is reachable by coincidence', () => {
     expect(countEthTerms('a fork at 8141')).toBe(1);
     expect(gated('a fork at 8141')).toEqual([]);
+    // Same text, default mode: no gate to fail.
+    expect(ungated('a fork at 8141')).toEqual([8141]);
   });
 
   it('lets a prefixed reference unlock the bare numbers beside it', () => {
@@ -243,14 +309,20 @@ describe('Tier 2 — the per-block gate', () => {
   });
 
   it('does not let one block unlock the block next to it', () => {
-    // The regression that matters most. The gate used to ask whether the PAGE
-    // contained a prefixed reference, so one post mentioning EIP-7702 unlocked
-    // every unrelated post in the same timeline.
+    // The regression that matters most, and the reason the gate is evaluated per
+    // block: it used to ask whether the PAGE contained a prefixed reference, so
+    // one post mentioning EIP-7702 unlocked every unrelated post in the timeline.
     const feed = [
       'EIP-7702 shipped; 4337 bundlers still matter.',
       'Final score 1023 to 4337 across the season, a record 8141 attendance',
     ];
     expect(feed.map(gated)).toEqual([[7702, 4337], []]);
+    // The neighbour is locked by its own content, not by anything page-wide:
+    // with the gate off it matches, which is what the default mode does.
+    expect(feed.map(ungated)).toEqual([
+      [7702, 4337],
+      [4337, 8141],
+    ]);
   });
 
   describe('ordinary prose carrying 4-digit numbers stays locked', () => {
@@ -270,6 +342,8 @@ describe('Tier 2 — the per-block gate', () => {
   it('accepts the terse-block tradeoff, which selection lookup covers', () => {
     expect(gated('thoughts on 8141?')).toEqual([]);
     expect(parseSelection('8141')!.n).toBe(8141);
+    // The tradeoff only exists in alpha mode.
+    expect(ungated('thoughts on 8141?')).toEqual([8141]);
   });
 
   describe('countEthTerms', () => {
@@ -352,12 +426,12 @@ describe('parseSelection — explicit user lookup', () => {
 
   it('deliberately skips the gates that automatic matching applies', () => {
     // Selecting a number is stronger evidence than any heuristic, so the digit
-    // floor and the year rejection do not apply here. Automatic matching refuses
-    // both of these even with bare numbers enabled.
+    // floor and the year rejection do not apply here. Alpha mode refuses both of
+    // these even with bare numbers enabled; a selection resolves them anyway.
     expect(parse('20')!.n).toBe(20);
     expect(parse('2025')!.n).toBe(2025);
-    expect(nums('20', true)).toEqual([]);
-    expect(nums('2025', true)).toEqual([]);
+    expect(strict('20')).toEqual([]);
+    expect(strict('2025')).toEqual([]);
   });
 
   it('keeps the written prefix so the EIP/ERC mix-up note still works', () => {

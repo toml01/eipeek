@@ -58,9 +58,34 @@ h1 {
   accent-color: var(--accent);
 }
 
+/* Controls that only apply while their parent checkbox is on. */
+.sub {
+  margin-left: 25px;
+}
+
+.sub.off {
+  opacity: 0.45;
+}
+
 strong {
   display: block;
   font-weight: 550;
+}
+
+/* Element-qualified, because `.row span` claims every other span as a block. */
+span.tag {
+  display: inline-block;
+  flex: none;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: 1px;
 }
 
 small {
