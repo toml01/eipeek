@@ -486,10 +486,11 @@ async function applyAliases(
       const other = [...merged.values(), ...unmerged].find((p) => p !== target && p.n === n);
       if (other) log(`    note: ${n} is also claimed by ${JSON.stringify(other.t)}`);
     }
+    const kind = target.k.toUpperCase();
     log(
-      `    PR #${target.pr ?? '-'} ${JSON.stringify(target.t)} -> EIP-${target.n}` +
+      `    PR #${target.pr ?? '-'} ${JSON.stringify(target.t)} -> ${kind}-${target.n}` +
         `${target.aka.length ? ` (also ${target.aka.join(', ')})` : ''}` +
-        `${target.prFileN ? `, file eip-${target.prFileN}.md` : ''}`,
+        `${target.prFileN ? `, file ${target.k}-${target.prFileN}.md` : ''}`,
     );
   }
   return errors;
@@ -687,6 +688,40 @@ async function main() {
   log(`  wrote src/core/numbers.generated.ts (${mergedNums.length} + ${unmergedNums.length} numbers)`);
   if (aliased.length) log(`  ${aliased.length} proposal(s) carry aliases`);
   await rm(CACHE, { recursive: true, force: true });
+
+  reportContested(sorted, new Set(aliased.map((p) => p.pr!).filter(Boolean)));
+}
+
+/**
+ * Numbers claimed by more than one open PR, printed for a human to look at.
+ *
+ * A contested number is a number one side will lose, so it is the cheapest
+ * warning that a renumbering is coming: both renumberings found so far -- 8361 to
+ * 8363, and 8338 to 8351 -- were contested first. It cannot say what the new
+ * number will be; `npm run data:review` asks the forum that.
+ */
+function reportContested(all: Proposal[], aliased: Set<number>) {
+  const byNumber = new Map<number, Proposal[]>();
+  for (const p of all) {
+    if (!p.pr) continue;
+    const list = byNumber.get(p.n);
+    if (list) list.push(p);
+    else byNumber.set(p.n, [p]);
+  }
+  const contested = [...byNumber.entries()]
+    .filter(([, list]) => list.length > 1)
+    .sort((a, b) => a[0] - b[0]);
+  if (contested.length === 0) return;
+
+  log('');
+  log(`REVIEW: ${contested.length} number(s) claimed by more than one open PR.`);
+  log('  One claimant will be renumbered. Run `npm run data:review` to ask the');
+  log('  forum which, then add an entry to data/aliases.json.');
+  for (const [n, list] of contested) {
+    const covered = list.some((p) => aliased.has(p.pr!)) ? '  [alias present]' : '';
+    log(`  ${n}${covered}`);
+    for (const p of list) log(`      PR #${p.pr} ${p.prRepo}  ${JSON.stringify(p.t)}`);
+  }
 }
 
 function chunk(nums: number[]): string {

@@ -139,12 +139,38 @@ describe('aliases', () => {
     expect(aliasNumbers(resolve(8363)[0]!)).toEqual([8361]);
   });
 
-  it('links source at the filename, which lags the canonical number', () => {
-    // PR #12081 still ships eip-8361.md, so linking eip-8363.md would 404.
-    const p = resolve(8363)[0]!;
-    expect(p.prFileN).toBe(8361);
-    expect(sourceUrl(p)).toContain('/EIPS/eip-8361.md');
-    expect(sourceUrl(p)).not.toContain('eip-8363.md');
+  it('always links source at the filename, never the canonical number', () => {
+    // An aliased proposal's file often lags its assigned number, so the source
+    // link must follow `prFileN` when it is set. Asserted as an invariant rather
+    // than against one PR: upstream renames its file eventually, which is
+    // exactly what happened to #12081 (eip-8361.md -> eip-8363.md).
+    for (const p of all.filter((x) => x.aka?.length && isUnmerged(x))) {
+      const fileN = p.prFileN ?? p.n;
+      const dir = p.prRepo === 'ERCs' ? 'ERCS' : 'EIPS';
+      const stem = p.prRepo === 'ERCs' ? 'erc' : 'eip';
+      expect(sourceUrl(p), `pr #${p.pr}`).toContain(`/${dir}/${stem}-${fileN}.md`);
+    }
+  });
+
+  it('files the renumbered ERC under 8351 and keeps 8338 resolving', () => {
+    // ERCs PR #1913 still ships erc-8338.md, but the forum thread redirects to
+    // erc-8351-..., so 8351 is the assigned number.
+    const p = resolve(8351);
+    expect(p).toHaveLength(1);
+    expect(p[0]!.t).toBe('Prediction Market CTF Wrapper');
+    expect(p[0]!.aka).toEqual([8338]);
+    expect(p[0]!.prFileN).toBe(8338);
+    // The source link must follow the filename, not the canonical number.
+    expect(sourceUrl(p[0]!)).toContain('/ERCS/erc-8338.md');
+  });
+
+  it('leaves 8338 contested between the two claimants', () => {
+    const claims = resolve(8338);
+    expect(claims).toHaveLength(2);
+    expect(claims.map((c) => c.pr).sort()).toEqual([1879, 1913]);
+    // #1879 still holds 8338 as its own number; #1913 reaches it via the alias.
+    expect(claims.find((c) => c.pr === 1879)!.n).toBe(8338);
+    expect(claims.find((c) => c.pr === 1913)!.n).toBe(8351);
   });
 
   it('documents every alias entry', () => {

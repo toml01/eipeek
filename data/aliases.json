@@ -3,6 +3,12 @@
     "canonical": 8363,
     "alsoKnownAs": [8361],
     "target": { "pr": 12081, "repo": "EIPs" },
-    "reason": "Tapered Issuance Burn self-assigned 8361 in PR #12081."
+    "reason": "Discussion still says 8361; PR #12081 has since renamed its file, so only the alias still does work."
+  },
+  {
+    "canonical": 8351,
+    "alsoKnownAs": [8338],
+    "target": { "pr": 1913, "repo": "ERCs" },
+    "reason": "Editors assigned 8351; the file is still erc-8338.md, and 8338 is also claimed by PR #1879."
   }
 ]

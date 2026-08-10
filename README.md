@@ -188,7 +188,9 @@ via `data/aliases.json`:
 Hovering 8361 therefore shows a card headed **EIP-8363** with *also EIP-8361* — the
 reference resolves, and the reader is corrected rather than confirmed. Note the PR
 file is still named `eip-8361.md`, so the source link uses the filename while the
-display uses the canonical number; linking `eip-8363.md` would 404.
+display uses the canonical number. (PR #12081 has since renamed its file, so that
+entry now only carries the alias — but ERC-8351 shows the same shape live, where
+the file is still `erc-8338.md`.)
 
 That file is **hand-maintained on purpose**. Renumberings are rare, and automated
 title-matching would risk silently merging unrelated proposals. Targets are keyed
@@ -197,6 +199,43 @@ PR #12081" is not. Every entry needs a `reason`, and the build fails if a target
 has gone missing or if two proposals claim the same canonical number. An alias
 *overlapping* another proposal's number is fine — that is the contested case, and
 both get shown.
+
+### Finding renumberings
+
+Two signals, so this does not depend on someone noticing.
+
+**Contested numbers — free, and printed by `npm run data:build`.** A number claimed
+by more than one open PR is a number one side will lose, so it is the earliest
+warning. Both renumberings found so far were contested first: 8361 (→ 8363) and
+8338 (→ 8351). The build ends with a REVIEW block listing them and their claimants.
+It cannot say what the new number will be.
+
+**The forum thread — `npm run data:review`.** Discourse keys a thread on its
+trailing topic id and rewrites the slug when the title changes, so following
+`discussions-to` reveals the number the forum currently uses. That is how ERC-8351
+was confirmed: `erc-8338-prediction-market-ctf-wrapper` redirects to
+`erc-8351-…`.
+
+It is **advisory, and the forum is not automatically right** — a thread keeps
+whatever number its title was last edited to, so a stale slug looks exactly like a
+renumbering. Of the first three disagreements it reported, only one was real:
+
+| File | Forum | Verdict |
+| --- | --- | --- |
+| `erc-8338` | 8351 | real rename, confirmed |
+| `erc-8190` | 8184 | stale thread — 8184 is a *merged* proposal, "LUCID encrypted mempool" |
+| `erc-7989` | 7933 | probably stale — numbers are allocated upward, so a lower forum number suggests a guessed title |
+
+So the command annotates each disagreement with whether the forum's number is
+already taken, and only offers a paste-ready alias entry when it is free.
+
+It is a separate command because it needs ~200 throttled requests. Two other
+details matter:
+
+- It **never counts a failed request as a pass.** Failures get their own list. A
+  concurrent sweep during development hit HTTP 429 and silently hid the 8351 case
+  entirely, which is the whole reason for the separation.
+- 13 threads have no number in the title at all, so it cannot speak for those.
 
 ### Predict Ethereum blocks (alpha)
 
