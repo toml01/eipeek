@@ -93,19 +93,22 @@ genuinely dangerous, and the number distribution shows why:
 | Under 100 | 12 | 1, 2, 3, 20, 55, 67, 86 |
 | Three-digit | 79 | 100, 150, 155, 200, 777, 999 |
 
-A page saying "back in 2020" or "150 users" would light up. So when enabled, a
-bare number must clear every one of these:
+A page saying "back in 2020" or "150 users" will light up. When you switch Tier 2
+on you accept that, and the only remaining rules are the ones that decide *which*
+number the text holds:
 
-- 4–5 digits (removes the 91 proposals under 1000)
-- **the same text block** looks Ethereum-related — it holds a prefixed reference,
-  or at least two Ethereum terms (`rollup`, `L1`, `gas`, `fork`, `STARK`…). Only
-  the host allowlist is page-wide; content evidence is block-local, because a feed
-  is one page of unrelated blocks. See below.
-- not a year context (`in 2026`, `Q3 2026`, `March 2020`, `2024-2026`, `© 2026`)
-- not currency, a percentage, or a counted quantity (`$7702`, `7702%`, `7702 users`)
-- not part of a larger number (`1,7702`, `7702.5`, `77021`)
-- not hex or a hyphenated identifier (`0x7702`, `build-7702-rc1`)
-- resolves to a real proposal
+- it resolves to a real proposal
+- it is not a fragment of a longer numeric literal — `1,7702` holds 17702 and
+  `7702.5` holds 7702.5, so marking `7702` in either would highlight a number
+  nobody wrote
+- word boundaries still apply, so `0x7702` and `77021` are untouched
+
+Everything else is opt-in. Two settings narrow it:
+
+| Setting | Effect |
+| --- | --- |
+| **Blocked sites** | Bare numbers are never marked on these hosts. Prefixed references still are, which is what makes this different from *Disabled sites*. |
+| **Predict Ethereum blocks** (alpha) | Restores the conservative rules — see below. |
 
 ### References split across elements
 
@@ -191,17 +194,13 @@ has gone missing or if two proposals claim the same canonical number. An alias
 *overlapping* another proposal's number is fine — that is the contested case, and
 both get shown.
 
-### The bare-number gate is per block, not per page
+### Predict Ethereum blocks (alpha)
 
-A page-wide "is there an `EIP-…` anywhere here?" test is wrong in both directions
-on a feed. One post mentioning EIP-7702 would unlock bare numbers for every
-unrelated post beside it, and a post writing only bare numbers would never unlock
-at all.
-
-So the content evidence is judged per text block. A block unlocks bare matching if
-it holds a prefixed reference, or at least **two distinct** Ethereum terms. Two,
-because one is reachable by coincidence — "fork" in a recipe, "account" in a bank
-statement. Measured distinct-term counts:
+This option judges **each text block on its own** and only allows bare numbers in
+blocks that look Ethereum-related. A block qualifies if it holds a prefixed
+reference, or at least **two distinct** Ethereum terms. Two, because one is
+reachable by coincidence — "fork" in a recipe, "account" in a bank statement.
+Measured distinct-term counts:
 
 | Block | Terms | Bare numbers |
 | --- | --- | --- |
@@ -211,11 +210,16 @@ statement. Measured distinct-term counts:
 | "returns 8141 records per page with a 4096 byte limit" | 0 | ignored |
 | "bind to 8141 and forward 8288 through the proxy" | 0 | ignored |
 
-The host allowlist stays page-wide, since that is site-level trust rather than
-evidence from the text.
+Per block, not per page: a page-wide test is wrong in both directions on a feed —
+one post mentioning EIP-7702 would unlock every unrelated post beside it, and a
+post writing only bare numbers would never unlock at all.
 
-Terse blocks lose out: "thoughts on 8141?" scores 0 and stays locked. That is the
-deliberate tradeoff, and it is what the selection lookup below is for.
+The option also restores the 4-digit minimum and the year, currency, unit, date
+and hyphenated-identifier filters. Terse blocks lose out either way: "thoughts on
+8141?" scores 0 and stays locked, which is what the selection lookup below is for.
+
+There is deliberately **no host allowlist**. Site-level trust is expressed by the
+blocked-sites list instead, which subtracts rather than adds.
 
 ### Looking up a number you select
 
@@ -355,20 +359,28 @@ both the hover screenshot and the packaged zip.
 
 ### Scan cost on real pages
 
-Segment-based scanning versus the older per-text-node scan, which could reject
-any node without a digit:
+Median of 9 runs over saved pages replayed through the real scan pipeline. Times
+are the whole scan; the count is matches found.
 
-| Page | Text nodes | Per-node | Segmented | References found |
+| Page | Text nodes | Tier 2 off | Unrestricted | Alpha |
 | --- | --- | --- | --- | --- |
-| eips.ethereum.org `/all` | 1939 | 27 ms | 25.7 ms | 107 → 107 |
-| GitHub md source | 1036 | 11.6 ms | 19.8 ms | 972 → 972 |
-| ethereum.org docs | 89 | 4.3 ms | 6.1 ms | 49 → 49 |
-| DuckDuckGo search | 54 | 2.1 ms | 3.4 ms | 41 → **43** |
+| eips.ethereum.org `/all` | 15664 | 19.2 ms / 107 | 19.0 ms / **1341** | 18.8 ms / 107 |
+| Wikipedia Olympic medals | 16218 | 30.5 ms / 0 | 31.0 ms / **2262** | 30.4 ms / 0 |
+| Wikipedia by population | 8273 | 14.9 ms / 0 | 15.1 ms / **911** | 14.9 ms / 0 |
+| Wikipedia "Ethereum" | 4766 | 7.8 ms / 23 | 7.8 ms / **475** | 7.7 ms / 24 |
+| eip-7702 spec page | 977 | 1.2 ms / 37 | 1.2 ms / **70** | 1.2 ms / 39 |
+| Hacker News front page | 481 | 1.0 ms / 0 | 1.0 ms / **39** | 1.0 ms / 0 |
 
-Worst case is roughly double on small absolute numbers, and +8 ms on the heaviest
-page. Recall is identical everywhere except the search page, which gains the split
-reference plus one that the old already-a-link rule suppressed — so joining inline
-runs is not inventing matches.
+Unrestricted Tier 2 costs almost nothing in time — matching alone goes from
+0.3 ms to 1.1 ms at worst, and total scan time rises by at most 0.5 ms, because
+the DOM walk dominates everywhere. Alpha mode costs about the same, since the
+4-digit floor discards most candidates before the dataset lookup.
+
+**The cap is reachable.** With Tier 2 unrestricted, a number-dense table with no
+Ethereum content at all — the all-time Olympic medal table — produces 2262
+candidates and is truncated at `MAX_MATCHES` (2000). Truncation is
+document-order, so the tail of such a page gets nothing. Density triggers this,
+not length. Alpha mode finds 0 on the same page.
 
 ### Dynamic pages
 
