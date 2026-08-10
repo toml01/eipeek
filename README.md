@@ -1,4 +1,4 @@
-# EIP Helper
+# EIPeek
 
 [![CI](https://github.com/toml01/eip-helper/actions/workflows/ci.yml/badge.svg)](https://github.com/toml01/eip-helper/actions/workflows/ci.yml)
 
