@@ -28,13 +28,33 @@ const FORM = `
     <span>
       <strong>Also match bare numbers</strong>
       <small>
-        Matches <code>7702</code> with no <code>EIP-</code> prefix. Off by default:
-        34 proposal numbers are also plausible years (2015, 2020, 2025, 2026…) and 91
-        are under 1000. When on, only 4–5 digit numbers count, the page has to look
-        Ethereum-related, and year, currency, and hex contexts are skipped.
+        Matches <code>7702</code> with no <code>EIP-</code> prefix. Any 1–5 digit
+        proposal number counts, so years and quantities get marked too: 2025 and 3 are
+        both real proposals.
       </small>
     </span>
   </label>
+
+  <div class="sub" id="bareOptions">
+    <label class="row">
+      <input type="checkbox" id="predictEthBlocks" />
+      <span>
+        <strong>Only where the text looks Ethereum-related <span class="tag">alpha</span></strong>
+        <small>
+          Needs 4–5 digits, and a prefixed reference or two Ethereum terms in the same
+          paragraph. Skips years and prices, and misses real references.
+        </small>
+      </span>
+    </label>
+
+    <div class="row">
+      <span>
+        <strong>Never guess on these sites</strong>
+        <small>One hostname per line, subdomains included. <code>EIP-7702</code> still matches.</small>
+        <textarea id="bareNumberBlockedSites" rows="3" spellcheck="false"></textarea>
+      </span>
+    </div>
+  </div>
 
   <label class="row">
     <input type="checkbox" id="includeUnmerged" />
@@ -103,6 +123,20 @@ const FORM = `
   </footer>
 `;
 
+/** One hostname per line, tolerating pasted URLs. */
+function parseHostList(value: string): string[] {
+  return value
+    .split('\n')
+    .map((s) =>
+      s
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/\/.*$/, ''),
+    )
+    .filter(Boolean);
+}
+
 /** Renders the form into `root` and wires every control to storage. */
 export async function mountSettingsForm(root: HTMLElement): Promise<void> {
   root.innerHTML = FORM;
@@ -111,12 +145,25 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
 
   const enabled = $<HTMLInputElement>('enabled');
   const bareNumbers = $<HTMLInputElement>('bareNumbers');
+  const predictEthBlocks = $<HTMLInputElement>('predictEthBlocks');
+  const bareNumberBlockedSites = $<HTMLTextAreaElement>('bareNumberBlockedSites');
+  const bareOptions = $<HTMLDivElement>('bareOptions');
   const includeUnmerged = $<HTMLInputElement>('includeUnmerged');
   const lookupOnSelection = $<HTMLInputElement>('lookupOnSelection');
   const debugMode = $<HTMLInputElement>('debugMode');
   const highlightStyle = $<HTMLSelectElement>('highlightStyle');
   const disabledSites = $<HTMLTextAreaElement>('disabledSites');
   const saved = $<HTMLParagraphElement>('saved');
+
+  // Both sub-controls only mean anything while bare matching is on. Disabled
+  // rather than hidden, so the option is discoverable before it applies and the
+  // form does not jump as it is toggled.
+  function syncBareOptions() {
+    const on = bareNumbers.checked;
+    predictEthBlocks.disabled = !on;
+    bareNumberBlockedSites.disabled = !on;
+    bareOptions.classList.toggle('off', !on);
+  }
 
   let flashTimer: number | undefined;
   function flash() {
@@ -135,14 +182,24 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
   const settings = await getSettings();
   enabled.checked = settings.enabled;
   bareNumbers.checked = settings.bareNumbers;
+  predictEthBlocks.checked = settings.predictEthBlocks;
+  bareNumberBlockedSites.value = settings.bareNumberBlockedSites.join('\n');
   includeUnmerged.checked = settings.includeUnmerged;
   lookupOnSelection.checked = settings.lookupOnSelection;
   debugMode.checked = settings.debugMode;
   highlightStyle.value = settings.highlightStyle;
   disabledSites.value = settings.disabledSites.join('\n');
+  syncBareOptions();
 
   enabled.addEventListener('change', () => void save({ enabled: enabled.checked }));
-  bareNumbers.addEventListener('change', () => void save({ bareNumbers: bareNumbers.checked }));
+  bareNumbers.addEventListener('change', () => {
+    syncBareOptions();
+    void save({ bareNumbers: bareNumbers.checked });
+  });
+  predictEthBlocks.addEventListener('change', () => void save({ predictEthBlocks: predictEthBlocks.checked }));
+  bareNumberBlockedSites.addEventListener('change', () =>
+    void save({ bareNumberBlockedSites: parseHostList(bareNumberBlockedSites.value) }),
+  );
   includeUnmerged.addEventListener('change', () => void save({ includeUnmerged: includeUnmerged.checked }));
   lookupOnSelection.addEventListener('change', () => void save({ lookupOnSelection: lookupOnSelection.checked }));
   debugMode.addEventListener('change', () => void save({ debugMode: debugMode.checked }));
@@ -151,11 +208,6 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
     () => void save({ highlightStyle: highlightStyle.value as Settings['highlightStyle'] }),
   );
   disabledSites.addEventListener('change', () =>
-    void save({
-      disabledSites: disabledSites.value
-        .split('\n')
-        .map((s) => s.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''))
-        .filter(Boolean),
-    }),
+    void save({ disabledSites: parseHostList(disabledSites.value) }),
   );
 }

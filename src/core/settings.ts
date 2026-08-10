@@ -19,10 +19,31 @@ export async function setSettings(patch: Partial<Settings>): Promise<void> {
   await browser.storage.sync.set(patch);
 }
 
+/**
+ * Whether a hostname is covered by a user-written site list.
+ *
+ * Shared by both site lists on purpose: `disabledSites` and
+ * `bareNumberBlockedSites` are written into identical textareas, so entering
+ * `example.com` has to mean the same thing in each -- the host itself, its
+ * subdomains, and `www.` either way.
+ */
+export function hostListCovers(list: readonly string[], hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^www\./, '');
+  return list.some((d) => h === d || h.endsWith(`.${d}`));
+}
+
 export function isSiteEnabled(s: Settings, hostname: string): boolean {
   if (!s.enabled) return false;
-  const h = hostname.toLowerCase().replace(/^www\./, '');
-  return !s.disabledSites.some((d) => h === d || h.endsWith(`.${d}`));
+  return !hostListCovers(s.disabledSites, hostname);
+}
+
+/**
+ * Whether Tier 2 is available on this host at all. Separate from
+ * `isSiteEnabled`, because a site on the bare-number blacklist keeps its
+ * prefixed references highlighted -- only the guessing stops.
+ */
+export function bareNumbersAllowedOn(s: Settings, hostname: string): boolean {
+  return s.bareNumbers && !hostListCovers(s.bareNumberBlockedSites, hostname);
 }
 
 export function onSettingsChanged(fn: (s: Settings) => void): void {

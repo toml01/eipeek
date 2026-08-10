@@ -1,14 +1,27 @@
 import { classify, lookup, numberValidator } from '../core/dataset';
-import { blockAllowsBare, findMatches, isEthHost, parseSelection } from '../core/match';
+import { blockAllowsBare, findMatches, parseSelection } from '../core/match';
 import { buildSegment, locate, partsCovering, type Segment } from '../core/segments';
-import { getSettings, isSiteEnabled, onSettingsChanged } from '../core/settings';
+import {
+  bareNumbersAllowedOn,
+  getSettings,
+  isSiteEnabled,
+  onSettingsChanged,
+} from '../core/settings';
 import type { Match, Settings } from '../core/types';
 import { Tooltip } from '../ui/tooltip';
 
 const HIGHLIGHT_NAME = 'eip-ref';
 const STYLE_ID = 'eip-helper-highlight-style';
 
-/** Backstop for pathological pages; the tooltip is useless past this anyway. */
+/**
+ * Backstop for pathological pages; the tooltip is useless past this anyway.
+ *
+ * Unrestricted bare matching makes this reachable on pages that are not
+ * pathological at all: a Wikipedia all-time Olympic medal table yields 2262
+ * candidates and is truncated here, while the same page in `predictEthBlocks`
+ * mode yields 0. Left at 2000 deliberately -- past that the highlights are
+ * decoration, and the numbers it drops are the ones furthest down the page.
+ */
 const MAX_MATCHES = 2000;
 const RESCAN_DEBOUNCE_MS = 300;
 const HOVER_DWELL_MS = 120;
@@ -86,16 +99,19 @@ async function start() {
     const segments = collectSegments(tooltip.hostElement);
     const isValid = numberValidator(settings.includeUnmerged);
 
-    // Tier 2 is decided per segment, i.e. per block of text. A page-wide signal
-    // is wrong in both directions on a feed: one post mentioning EIP-7702 would
-    // unlock every unrelated post beside it, and a post written entirely in bare
-    // numbers would never unlock. The host allowlist is the one page-wide part,
-    // because it is site-level trust rather than page content.
-    const trustedHost = isEthHost(location.hostname);
+    // Tier 2 has two page-wide answers -- the setting, and whether this host is
+    // on the bare-number blacklist -- so they are resolved once per scan.
+    const bareOnThisSite = bareNumbersAllowedOn(settings, location.hostname);
+    // The alpha gate, by contrast, has to be asked per segment, i.e. per block of
+    // text. A page-wide version is wrong in both directions on a feed: one post
+    // mentioning EIP-7702 would unlock every unrelated post beside it, and a post
+    // written entirely in bare numbers would never unlock.
+    const strictBare = settings.predictEthBlocks;
     const found = matchSegments(
       segments,
       isValid,
-      (text) => settings.bareNumbers && (trustedHost || blockAllowsBare(text)),
+      (text) => bareOnThisSite && (!strictBare || blockAllowsBare(text)),
+      strictBare,
     );
 
     if (found.length === 0) {
@@ -195,11 +211,11 @@ async function start() {
   );
 
   // -- selection lookup --------------------------------------------------
-  // The manual escape hatch. Automatic bare-number matching has to stay
-  // conservative -- 34 proposal numbers are plausible years -- so a reference
-  // written bare on a page with no other Ethereum signal is unreachable
-  // automatically. Selecting it is the user asserting it IS a reference, which
-  // beats any heuristic, so every context gate is skipped here.
+  // The manual escape hatch. Bare matching is off by default, and under
+  // `predictEthBlocks` it stays conservative, so a reference written bare is
+  // often unreachable automatically. Selecting it is the user asserting it IS a
+  // reference, which beats any heuristic, so every gate is skipped here --
+  // including the site blacklist, which is about noise, not about this number.
   let selectionTimer: number | undefined;
   let shownFromSelection = false;
 
@@ -397,21 +413,22 @@ function collectSegments(tooltipHost: Element | null): Array<Segment<Text>> {
 }
 
 /**
- * One pass over every segment. `allowBareIn` is asked per segment, so Tier 2 is
- * gated by the block being matched rather than by anything found elsewhere on
- * the page -- which is also why one pass is enough. (It used to take two: Tier 1
- * everywhere to answer "is this page Ethereum-related?", then everything again
- * with Tier 2 on.)
+ * One pass over every segment. `allowBareIn` is asked per segment, so under
+ * `predictEthBlocks` Tier 2 is gated by the block being matched rather than by
+ * anything found elsewhere on the page -- which is also why one pass is enough.
+ * (It used to take two: Tier 1 everywhere to answer "is this page
+ * Ethereum-related?", then everything again with Tier 2 on.)
  */
 function matchSegments(
   segments: Array<Segment<Text>>,
   isValid: (n: number) => boolean,
   allowBareIn: (text: string) => boolean,
+  strictBare: boolean,
 ): Array<{ segment: Segment<Text>; match: Match }> {
   const out: Array<{ segment: Segment<Text>; match: Match }> = [];
   for (const segment of segments) {
     const allowBare = allowBareIn(segment.text);
-    for (const match of findMatches(segment.text, { isValid, allowBare })) {
+    for (const match of findMatches(segment.text, { isValid, allowBare, strictBare })) {
       out.push({ segment, match });
     }
     if (out.length >= MAX_MATCHES) break;

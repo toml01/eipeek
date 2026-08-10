@@ -88,8 +88,15 @@ describe('matching a split reference end to end', () => {
     expect(match!.text).toBe('ERC20');
   });
 
-  it('still ignores the year in the joined tail', () => {
+  it('ignores the year in the joined tail under the alpha filters', () => {
     const segment = buildSegment(runs('EIP', '-', '7702', ' went live in may 2025.'));
-    expect(findMatches(segment.text, { isValid, allowBare: true }).map((m) => m.n)).toEqual([7702]);
+    expect(
+      findMatches(segment.text, { isValid, allowBare: true, strictBare: true }).map((m) => m.n),
+    ).toEqual([7702]);
+    // Unrestricted, 2025 is a real proposal number and gets marked -- the joining
+    // is what is under test here, and it behaves the same either way.
+    expect(findMatches(segment.text, { isValid, allowBare: true }).map((m) => m.n)).toEqual([
+      7702, 2025,
+    ]);
   });
 });
