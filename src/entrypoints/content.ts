@@ -6,7 +6,7 @@ import type { Match, Settings } from '../core/types';
 import { Tooltip } from '../ui/tooltip';
 
 const HIGHLIGHT_NAME = 'eip-ref';
-const STYLE_ID = 'eip-helper-highlight-style';
+const STYLE_ID = 'eipeek-highlight-style';
 
 /** Backstop for pathological pages; the tooltip is useless past this anyway. */
 const MAX_MATCHES = 2000;

@@ -13,7 +13,7 @@ import './settings-form.css';
  * 800x600 while the options page is not.
  */
 const FORM = `
-  <h1>EIP Helper</h1>
+  <h1>EIPeek</h1>
 
   <label class="row">
     <input type="checkbox" id="enabled" />
