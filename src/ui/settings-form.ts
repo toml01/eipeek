@@ -1,5 +1,5 @@
 import { getSettings, setSettings } from '../core/settings';
-import type { Settings } from '../core/types';
+import { DEFAULT_SETTINGS, type Settings } from '../core/types';
 import './settings-form.css';
 
 /**
@@ -54,6 +54,14 @@ const FORM = `
         <textarea id="bareNumberBlockedSites" rows="3" spellcheck="false"></textarea>
       </span>
     </div>
+  </div>
+
+  <div class="row">
+    <span>
+      <strong>Most matches per page</strong>
+      <small>0 for no limit. Beyond the limit the rest of the page is skipped.</small>
+      <input type="number" id="maxMatches" min="0" step="100" />
+    </span>
   </div>
 
   <label class="row">
@@ -147,6 +155,7 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
   const bareNumbers = $<HTMLInputElement>('bareNumbers');
   const predictEthBlocks = $<HTMLInputElement>('predictEthBlocks');
   const bareNumberBlockedSites = $<HTMLTextAreaElement>('bareNumberBlockedSites');
+  const maxMatches = $<HTMLInputElement>('maxMatches');
   const bareOptions = $<HTMLDivElement>('bareOptions');
   const includeUnmerged = $<HTMLInputElement>('includeUnmerged');
   const lookupOnSelection = $<HTMLInputElement>('lookupOnSelection');
@@ -184,6 +193,7 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
   bareNumbers.checked = settings.bareNumbers;
   predictEthBlocks.checked = settings.predictEthBlocks;
   bareNumberBlockedSites.value = settings.bareNumberBlockedSites.join('\n');
+  maxMatches.value = String(settings.maxMatches);
   includeUnmerged.checked = settings.includeUnmerged;
   lookupOnSelection.checked = settings.lookupOnSelection;
   debugMode.checked = settings.debugMode;
@@ -197,6 +207,14 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
     void save({ bareNumbers: bareNumbers.checked });
   });
   predictEthBlocks.addEventListener('change', () => void save({ predictEthBlocks: predictEthBlocks.checked }));
+  maxMatches.addEventListener('change', () => {
+    // Fall back rather than store nonsense; the field is reset so the stored
+    // value and what is on screen never disagree.
+    const n = Number.parseInt(maxMatches.value, 10);
+    const next = Number.isFinite(n) && n >= 0 ? n : DEFAULT_SETTINGS.maxMatches;
+    maxMatches.value = String(next);
+    void save({ maxMatches: next });
+  });
   bareNumberBlockedSites.addEventListener('change', () =>
     void save({ bareNumberBlockedSites: parseHostList(bareNumberBlockedSites.value) }),
   );

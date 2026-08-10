@@ -18,11 +18,19 @@ const STYLE_ID = 'eipeek-highlight-style';
  *
  * Unrestricted bare matching makes this reachable on pages that are not
  * pathological at all: a Wikipedia all-time Olympic medal table yields 2262
- * candidates and is truncated here, while the same page in `predictEthBlocks`
- * mode yields 0. Left at 2000 deliberately -- past that the highlights are
- * decoration, and the numbers it drops are the ones furthest down the page.
+ * candidates and is truncated, while the same page in `predictEthBlocks` mode
+ * yields 0. The default is 2000 -- past that the highlights are decoration, and
+ * the ones dropped are furthest down the page. `settings.maxMatches` overrides
+ * it, and 0 removes the limit.
  */
-const MAX_MATCHES = 2000;
+const DEFAULT_MAX_MATCHES = 2000;
+
+/** Resolves the cap, treating 0 as no limit and rejecting nonsense. */
+function matchCap(settings: Settings): number {
+  const n = settings.maxMatches;
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_MAX_MATCHES;
+  return n === 0 ? Infinity : Math.floor(n);
+}
 const RESCAN_DEBOUNCE_MS = 300;
 const HOVER_DWELL_MS = 120;
 const HOVER_GRACE_MS = 200;
@@ -107,11 +115,13 @@ async function start() {
     // mentioning EIP-7702 would unlock every unrelated post beside it, and a post
     // written entirely in bare numbers would never unlock.
     const strictBare = settings.predictEthBlocks;
+    const cap = matchCap(settings);
     const found = matchSegments(
       segments,
       isValid,
       (text) => bareOnThisSite && (!strictBare || blockAllowsBare(text)),
       strictBare,
+      cap,
     );
 
     if (found.length === 0) {
@@ -120,7 +130,7 @@ async function start() {
     }
 
     const rangeList: Range[] = [];
-    for (const { segment, match } of found.slice(0, MAX_MATCHES)) {
+    for (const { segment, match } of found.slice(0, cap)) {
       const from = locate(segment, match.start);
       const to = locate(segment, match.end);
       if (!from || !to) continue;
@@ -424,6 +434,7 @@ function matchSegments(
   isValid: (n: number) => boolean,
   allowBareIn: (text: string) => boolean,
   strictBare: boolean,
+  cap: number,
 ): Array<{ segment: Segment<Text>; match: Match }> {
   const out: Array<{ segment: Segment<Text>; match: Match }> = [];
   for (const segment of segments) {
@@ -431,7 +442,7 @@ function matchSegments(
     for (const match of findMatches(segment.text, { isValid, allowBare, strictBare })) {
       out.push({ segment, match });
     }
-    if (out.length >= MAX_MATCHES) break;
+    if (out.length >= cap) break;
   }
   return out;
 }

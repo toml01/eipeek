@@ -104,6 +104,15 @@ export interface Settings {
    * an explicit `EIP-7702` is worth a tooltip.
    */
   bareNumberBlockedSites: string[];
+  /**
+   * Most matches to paint on one page. 0 removes the limit.
+   *
+   * A limit exists because unrestricted Tier 2 is density-bound, not
+   * length-bound: a number-heavy table with no Ethereum content at all -- the
+   * all-time Olympic medal table -- yields 2262 candidates. Truncation is
+   * document-order, so the tail of such a page gets nothing.
+   */
+  maxMatches: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -119,4 +128,5 @@ export const DEFAULT_SETTINGS: Settings = {
   // only the number, and the title and status are what the tooltip adds.
   disabledSites: [],
   bareNumberBlockedSites: [],
+  maxMatches: 2000,
 };

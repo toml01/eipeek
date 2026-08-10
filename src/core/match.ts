@@ -260,9 +260,20 @@ export function bareIsWholeNumber(text: string, start: number, end: number): boo
   // Two characters is all the context this needs, so the window is tiny.
   const before = text.slice(Math.max(0, start - 2), start);
   const after = text.slice(end, end + 2);
-  if (/\d[.,]$/.test(before)) return false;
-  if (/^[.,]\d/.test(after)) return false;
+  // Only the decimal point. A period between digits always fuses them into one
+  // value, so "7702.5" holds 7702.5 and marking 7702 shows a number nobody
+  // wrote. A comma does not: "8081,7022" is a list far more often than it is a
+  // thousands group, so that judgement moved to the alpha filters.
+  if (/\d\.$/.test(before)) return false;
+  if (/^\.\d/.test(after)) return false;
   return true;
+}
+
+/** Thousands grouping, judged only under the alpha filters. */
+function bareIsCommaGrouped(text: string, start: number, end: number): boolean {
+  const before = text.slice(Math.max(0, start - 2), start);
+  const after = text.slice(end, end + 2);
+  return /\d,$/.test(before) || /^,\d/.test(after);
 }
 
 /**
@@ -276,6 +287,7 @@ export function bareIsWholeNumber(text: string, start: number, end: number): boo
  */
 export function bareLooksLikeProposal(text: string, start: number, end: number): boolean {
   if (!bareIsWholeNumber(text, start, end)) return false;
+  if (bareIsCommaGrouped(text, start, end)) return false;
 
   const before = text.slice(Math.max(0, start - 24), start);
   const after = text.slice(end, end + 24);

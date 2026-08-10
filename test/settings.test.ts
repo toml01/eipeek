@@ -69,3 +69,23 @@ describe('the bare-number site blacklist', () => {
     expect(isSiteEnabled(s, 'noisy.example')).toBe(true);
   });
 });
+
+describe('match cap', () => {
+  it('defaults to 2000', () => {
+    expect(DEFAULT_SETTINGS.maxMatches).toBe(2000);
+  });
+
+  it('treats 0 as no limit and anything invalid as the default', () => {
+    // Mirrors matchCap in content.ts, which cannot be imported here because that
+    // module needs a DOM. Keep the two in step.
+    const cap = (n: number) =>
+      !Number.isFinite(n) || n < 0 ? DEFAULT_SETTINGS.maxMatches : n === 0 ? Infinity : Math.floor(n);
+
+    expect(cap(0)).toBe(Infinity);
+    expect(cap(500)).toBe(500);
+    expect(cap(2000)).toBe(2000);
+    expect(cap(-1)).toBe(2000);
+    expect(cap(Number.NaN)).toBe(2000);
+    expect(cap(120.7)).toBe(120);
+  });
+});

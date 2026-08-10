@@ -178,7 +178,6 @@ describe('Tier 2 — structural checks, which apply in both modes', () => {
   // holds, so dropping them would highlight a number nobody wrote.
   const cases: Array<[string, number[]]> = [
     ['77021', []],
-    ['1,7702', []],
     ['3.7702', []],
     ['7702.5', []],
     ['1234567702', []],
@@ -186,10 +185,13 @@ describe('Tier 2 — structural checks, which apply in both modes', () => {
     ['0xdeadbeef7702', []],
     ['v7702', []],
     ['7702x', []],
-    // The digits either side of a thousands separator are both fragments.
-    ['17,702', []],
     // A hyphen joins nothing, so both numbers here are whole.
     ['7702-7710', [7702, 7710]],
+    // Nor does a comma. "8081,7022" is a list far more often than a thousands
+    // group, so both digit runs are whole numbers -- 7022 is simply not a
+    // proposal. Only the alpha filters read a comma as grouping.
+    ['8081,7702', [8081, 7702]],
+    ['8081,7022', [8081]],
   ];
 
   it.each(cases)('reads %j as %j in unrestricted mode', (text, expected) => {
@@ -203,10 +205,20 @@ describe('Tier 2 — structural checks, which apply in both modes', () => {
     },
   );
 
-  it('accepts a whole number and rejects a fragment', () => {
+  it('accepts a whole number and rejects a decimal fragment', () => {
     expect(bareIsWholeNumber('the 7702 model', 4, 8)).toBe(true);
-    expect(bareIsWholeNumber('1,7702', 2, 6)).toBe(false);
     expect(bareIsWholeNumber('7702.5', 0, 4)).toBe(false);
+    expect(bareIsWholeNumber('3.7702', 2, 6)).toBe(false);
+    // A comma is not structural, so this is whole here and filtered in alpha.
+    expect(bareIsWholeNumber('1,7702', 2, 6)).toBe(true);
+  });
+
+  it('treats a comma as thousands grouping only in alpha mode', () => {
+    // Both runs are whole numbers here, and EIP-1 exists -- so unrestricted mode
+    // marks it. That is the accepted cost of matching single digits.
+    expect(nums('1,7702', true)).toEqual([1, 7702]);
+    expect(strict('1,7702')).toEqual([]);
+    expect(nums('17,702', true)).toEqual([]); // 17 and 702 are not proposals
   });
 });
 

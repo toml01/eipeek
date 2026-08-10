@@ -98,10 +98,13 @@ on you accept that, and the only remaining rules are the ones that decide *which
 number the text holds:
 
 - it resolves to a real proposal
-- it is not a fragment of a longer numeric literal — `1,7702` holds 17702 and
-  `7702.5` holds 7702.5, so marking `7702` in either would highlight a number
-  nobody wrote
+- it is not a fragment of a decimal — `7702.5` holds 7702.5, so marking `7702`
+  would highlight a number nobody wrote
 - word boundaries still apply, so `0x7702` and `77021` are untouched
+
+A comma is **not** treated as grouping here: `8081,7702` is a list far more often
+than a thousands group, so both numbers match. Only the alpha option reads a comma
+as grouping.
 
 Everything else is opt-in. Two settings narrow it:
 
@@ -109,6 +112,7 @@ Everything else is opt-in. Two settings narrow it:
 | --- | --- |
 | **Blocked sites** | Bare numbers are never marked on these hosts. Prefixed references still are, which is what makes this different from *Disabled sites*. |
 | **Predict Ethereum blocks** (alpha) | Restores the conservative rules — see below. |
+| **Most matches per page** | Default 2000, `0` for no limit. Truncation is document-order, so past the limit the rest of the page is skipped. |
 
 ### References split across elements
 
@@ -214,8 +218,8 @@ Per block, not per page: a page-wide test is wrong in both directions on a feed 
 one post mentioning EIP-7702 would unlock every unrelated post beside it, and a
 post writing only bare numbers would never unlock at all.
 
-The option also restores the 4-digit minimum and the year, currency, unit, date
-and hyphenated-identifier filters. Terse blocks lose out either way: "thoughts on
+The option also restores the 4-digit minimum, thousands-comma grouping, and the
+year, currency, unit, date and hyphenated-identifier filters. Terse blocks lose out either way: "thoughts on
 8141?" scores 0 and stays locked, which is what the selection lookup below is for.
 
 There is deliberately **no host allowlist**. Site-level trust is expressed by the
@@ -378,9 +382,10 @@ the DOM walk dominates everywhere. Alpha mode costs about the same, since the
 
 **The cap is reachable.** With Tier 2 unrestricted, a number-dense table with no
 Ethereum content at all — the all-time Olympic medal table — produces 2262
-candidates and is truncated at `MAX_MATCHES` (2000). Truncation is
+candidates and is truncated at the cap (2000 by default). Truncation is
 document-order, so the tail of such a page gets nothing. Density triggers this,
-not length. Alpha mode finds 0 on the same page.
+not length. Alpha mode finds 0 on the same page. Raise or remove the cap in
+options if you would rather have every match.
 
 ### Dynamic pages
 
