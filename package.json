@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node test/e2e/verify.mjs",
+    "icons": "node scripts/build-icons.mjs",
     "data:build": "tsx scripts/build-dataset.ts",
     "data:review": "tsx scripts/review-dataset.ts",
     "postinstall": "wxt prepare"
