@@ -6,6 +6,7 @@ node_modules/
 .DS_Store
 *.log
 fixture-shot.png
+icon-contact-sheet.png
 contested-shot.png
 google-shot.png
 .claude/worktrees/

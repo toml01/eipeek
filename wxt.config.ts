@@ -1,7 +1,23 @@
 import { defineConfig } from 'wxt';
 
+// Rendered by `npm run icons`. Chrome uses `icons` for the extensions page and
+// the store and `action.default_icon` for the toolbar button, falling back to
+// `icons` when default_icon is absent; the toolbar is where the mark is always
+// on screen, so it gets said out loud rather than inherited. Same four files
+// either way.
+const ICONS = {
+  16: 'icon/16.png',
+  32: 'icon/32.png',
+  48: 'icon/48.png',
+  128: 'icon/128.png',
+};
+
 export default defineConfig({
   srcDir: 'src',
+  // publicDir defaults to <root>/public even when srcDir moves, so say it:
+  // everything shipped lives under src/. Contents are copied to the bundle
+  // root, which is what makes the icons resolve as `icon/16.png`.
+  publicDir: 'src/public',
   manifest: {
     name: 'EIPeek',
     description:
@@ -10,6 +26,7 @@ export default defineConfig({
     // web_accessible_resources -- the dataset ships bundled, so the extension
     // has no way to observe browsing and nothing for a page to fingerprint.
     permissions: ['storage'],
+    icons: ICONS,
     // Clicking the toolbar icon shows the settings inline. WXT derives
     // default_popup from the popup entrypoint on its own; this is here so the
     // action -- and its hover title -- is declared where the rest of the
@@ -18,6 +35,7 @@ export default defineConfig({
     action: {
       default_popup: 'popup.html',
       default_title: 'EIPeek — settings',
+      default_icon: ICONS,
     },
   },
 });
