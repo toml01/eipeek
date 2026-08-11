@@ -26,6 +26,13 @@ Then load `.output/chrome-mv3` via `chrome://extensions` → Developer mode →
 Click the toolbar icon for the settings. The popup and the options page render the
 same form from `src/ui/settings-form.ts`, so there is one copy of it.
 
+Icons live in `src/public/icon/` and are generated — `npm run icons` re-renders
+them, and `npm run icons -- --sheet` writes a contact sheet for checking them at
+size. Note `wxt.config.ts` sets `publicDir: 'src/public'`: WXT resolves
+`publicDir` against the project root, not `srcDir`, so without that line the
+manifest references `icon/*.png` that never reach the bundle and Chrome refuses to
+load the extension.
+
 ## How it works
 
 ### Highlighting without touching the page
@@ -391,8 +398,6 @@ both the hover screenshot and the packaged zip.
   (Twitter, most modern timelines) stay well under it.
 - **A reference split across a block boundary is not matched**, by design — see
   [above](#references-split-across-elements).
-- **No icons yet**, so the extension shows a default placeholder in the toolbar
-  and cannot be submitted to the Chrome Web Store as-is.
 - **Chromium only.** `CSS.highlights` is needed for painting. A Firefox port is
   plausible since hover no longer depends on a Chrome-only API.
 - **Data goes stale between releases**, by design — the dataset is bundled so
