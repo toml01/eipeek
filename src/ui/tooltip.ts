@@ -61,10 +61,12 @@ export class Tooltip {
     card.textContent = '';
     card.scrollTop = 0;
 
-    entries.forEach((proposal, i) => {
-      if (i > 0) card.append(el('div', 'sep'));
-      card.append(this.renderEntry(match, proposal));
-    });
+    // Stacked entries alone do not say why there are several, and the reader has
+    // to know the number is contested before comparing the claims.
+    if (entries.length > 1) {
+      card.append(el('div', 'banner', `${entries.length} proposals claim ${match.n}`));
+    }
+    for (const proposal of entries) card.append(this.renderEntry(match, proposal));
 
     this.visible = true;
     this.host!.style.visibility = 'hidden';
@@ -80,15 +82,22 @@ export class Tooltip {
    */
   private renderEntry(match: Match, p: Proposal): HTMLElement {
     const entry = el('div', 'entry');
+    // The padded body and the flush footer bar are siblings, so the footer's
+    // background can run to both card edges.
+    const body = el('div', 'body');
 
     // The header shows the CANONICAL number, not the one that happened to be
     // hovered: hovering a stale number should correct the reader, not confirm it.
     const head = el('div', 'head', [
-      el('span', 'label', canonicalLabel(p.n, p.k)),
+      el('span', 'num', canonicalLabel(p.n, p.k)),
+      el('span', `dot ${statusTone(p.s)}`),
       el('span', 'status', statusLine(p)),
     ]);
     if (isUnmerged(p)) head.append(el('span', 'badge', 'UNMERGED'));
-    entry.append(head);
+    if (isKindMismatch(match, p.k)) {
+      head.append(el('span', 'note', `Referenced as ${match.writtenKind?.toUpperCase()}-${match.n}`));
+    }
+    body.append(head);
 
     const title = el('div', 'title');
     title.append(el('span', 'title-text', p.t));
@@ -96,14 +105,18 @@ export class Tooltip {
     if (also.length) {
       title.append(el('span', 'also', `also ${also.map((n) => `EIP-${n}`).join(', ')}`));
     }
-    entry.append(title);
+    body.append(title);
+
+    // An unmerged proposal has no spec page, so the PR is its provenance.
+    if (isUnmerged(p)) {
+      body.append(
+        el('div', 'prov', p.prRepo ? `PR #${p.pr} · ethereum/${p.prRepo}` : `PR #${p.pr}`),
+      );
+    }
 
     // Present for ~74% of proposals.
-    if (p.d) entry.append(el('div', 'desc', p.d));
-
-    if (isKindMismatch(match, p.k)) {
-      entry.append(el('div', 'note', `Referenced as ${match.writtenKind?.toUpperCase()}-${match.n}`));
-    }
+    if (p.d) body.append(el('div', 'desc', p.d));
+    entry.append(body);
 
     const links = el('div', 'links');
     for (const link of linksFor(p)) {
@@ -132,11 +145,13 @@ export class Tooltip {
     card.scrollTop = 0;
 
     const entry = el('div', 'entry');
-    const head = el('div', 'head', [el('span', 'label', `EIP-${n}`)]);
+    const body = el('div', 'body');
+    // Grey rather than accent: nothing here is a resolved proposal to link to.
+    const head = el('div', 'head', [el('span', 'num muted', `EIP-${n}`)]);
     if (kind === 'hidden') head.append(el('span', 'badge', 'UNMERGED'));
-    entry.append(head);
+    body.append(head);
 
-    entry.append(
+    body.append(
       el(
         'div',
         'desc',
@@ -145,6 +160,7 @@ export class Tooltip {
           : 'Not in the bundled dataset.',
       ),
     );
+    entry.append(body);
     card.append(entry);
 
     this.visible = true;
@@ -234,39 +250,62 @@ function el(tag: string, cls: string, content?: string | Node[]): HTMLElement {
   return node;
 }
 
+/**
+ * Status dot colour. Groups the seven statuses the dataset actually carries into
+ * settled / in-flight / abandoned; anything unrecognised reads as abandoned
+ * rather than claiming a proposal is settled.
+ */
+function statusTone(status: string): 'ok' | 'wip' | 'cold' {
+  if (status === 'Final' || status === 'Living') return 'ok';
+  if (status === 'Draft' || status === 'Review' || status === 'Last Call') return 'wip';
+  return 'cold';
+}
+
 const CSS_TEXT = `
   :host { all: initial; }
   .card {
     box-sizing: border-box;
     max-width: ${MAX_WIDTH}px;
-    /* A contested number stacks several entries, so cap and scroll rather than
-       running off the viewport. */
+    border-radius: 10px;
+    /* Clips the footer bar's background to the rounded corners. The following
+       overflow-y re-opens the vertical axis, which a stack of rival claims
+       needs -- a scroll container still clips to the radius. */
+    overflow: hidden;
     max-height: 70vh;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid rgb(0 0 0 / 0.1);
+    border: 1px solid rgb(0 0 0 / 0.09);
     background: #fff;
-    color: #1a1a1a;
-    box-shadow: 0 4px 16px rgb(0 0 0 / 0.13);
+    color: #14141a;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.12);
     font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     text-align: left;
   }
-  .sep {
-    margin: 10px -12px;
-    border-top: 1px solid rgb(0 0 0 / 0.12);
+  .banner {
+    padding: 6px 13px;
+    background: #fdf0d0;
+    color: #8a6d00;
+    font-size: 11px;
+    font-weight: 550;
   }
-  .head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 3px;
+  .entry + .entry { border-top: 1px solid rgb(0 0 0 / 0.09); }
+  .body { padding: 11px 13px 12px; }
+  /* Wraps only when the badge and the mix-up note land on the same row. */
+  .head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 5px; }
+  .num {
+    font: 600 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.04em;
+    color: #4f46e5;
   }
-  .label { font-weight: 650; letter-spacing: 0.01em; }
-  .status { font-size: 11px; color: #666; }
+  .num.muted { color: #6b6b76; }
+  .dot { flex: none; width: 5px; height: 5px; border-radius: 999px; }
+  .dot.ok { background: #16a34a; }
+  .dot.wip { background: #8a6d00; }
+  .dot.cold { background: #6b6b76; }
+  .status { font-size: 11px; color: #6b6b76; }
+  .badge, .note { margin-left: auto; }
+  .badge + .note { margin-left: 0; }
   .badge {
-    margin-left: auto;
     padding: 1px 6px;
     border-radius: 999px;
     background: #fdf0d0;
@@ -276,22 +315,28 @@ const CSS_TEXT = `
     letter-spacing: 0.06em;
     white-space: nowrap;
   }
+  .note { font-size: 11px; color: #8a6d00; white-space: nowrap; }
   .title { display: flex; align-items: baseline; gap: 8px; }
-  .title-text { font-weight: 550; }
+  .title-text {
+    font-size: 14.5px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+  }
   .also {
     margin-left: auto;
-    color: #666;
+    color: #6b6b76;
     font-size: 11px;
     white-space: nowrap;
   }
-  .desc { margin-top: 5px; color: #444; font-size: 12px; }
-  .note { margin-top: 6px; font-size: 11px; color: #8a6d00; }
+  .prov { margin-top: 5px; font-size: 11.5px; color: #6b6b76; }
+  .desc { margin-top: 5px; color: #55555f; font-size: 12px; text-wrap: pretty; }
   .links {
     display: flex;
-    gap: 12px;
-    margin-top: 9px;
-    padding-top: 8px;
-    border-top: 1px solid rgb(0 0 0 / 0.08);
+    gap: 14px;
+    padding: 8px 13px;
+    background: #fafafb;
+    border-top: 1px solid rgb(0 0 0 / 0.07);
   }
   .links a {
     color: #4f46e5;
@@ -306,14 +351,20 @@ const CSS_TEXT = `
       background: #1f2023;
       color: #e8e8ea;
       border-color: rgb(255 255 255 / 0.12);
-      box-shadow: 0 4px 16px rgb(0 0 0 / 0.45);
+      box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
     }
-    .sep { border-top-color: rgb(255 255 255 / 0.14); }
-    .status, .also { color: #9a9aa2; }
+    .banner { background: #4a3c10; color: #f0cf6a; }
+    .entry + .entry { border-top-color: rgb(255 255 255 / 0.12); }
+    .num { color: #9b91ff; }
+    .num.muted { color: #9a9aa2; }
+    .dot.ok { background: #4ade80; }
+    .dot.wip { background: #f0cf6a; }
+    .dot.cold { background: #9a9aa2; }
+    .status, .also, .prov { color: #9a9aa2; }
     .badge { background: #4a3c10; color: #f0cf6a; }
+    .note { color: #f0cf6a; }
     .desc { color: #b8b8c0; }
-    .note { color: #d9b64f; }
-    .links { border-top-color: rgb(255 255 255 / 0.1); }
+    .links { background: #26272b; border-top-color: rgb(255 255 255 / 0.08); }
     .links a { color: #9b91ff; }
   }
 `;
