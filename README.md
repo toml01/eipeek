@@ -10,8 +10,8 @@ to the spec, forum discussion, and source.
 
 Covers **1189 merged proposals plus 205 that so far exist only in an open pull
 request**, across `ethereum/EIPs` and `ethereum/ERCs`, bundled with the extension.
-**No network requests are made while you browse**, and the extension requests no
-host permissions.
+**No network requests are made while you browse** — the dataset is in the
+package, so the pages you read stay on your machine.
 
 ## Install (development)
 
@@ -379,8 +379,17 @@ both the hover screenshot and the packaged zip.
 
 ## Permissions
 
-`storage` only — for settings. No host permissions, no `tabs`, no
-`web_accessible_resources`. The extension has no way to observe browsing.
+`storage` only under `permissions` — for settings. No `tabs`, no
+`web_accessible_resources`.
+
+The content script matches `<all_urls>`, which both Chrome and the Chrome Web
+Store count as broad host access; it is what makes the install prompt say "Read
+and change your data on all websites". What the extension does with that access
+is narrow: it reads text nodes and paints highlights. `INPUT`, `TEXTAREA`,
+`SELECT`, `SCRIPT`, and `IFRAME` are among the skipped tags, so form fields and
+passwords are never read, and no page content is stored or transmitted. Settings
+go to `storage.sync`, so the browser copies them between your own signed-in
+devices. See [PRIVACY.md](PRIVACY.md).
 
 ## Known limitations
 
@@ -450,8 +459,8 @@ incremental rescanning is not worth the complexity yet.
 
 - Hotkey palette: fuzzy-search proposals by topic and insert the reference at the
   cursor
-- New-activity hints for discussions (needs host permissions — a deliberate,
-  separate opt-in)
+- New-activity hints for discussions (needs network access to the forum — a
+  deliberate, separate opt-in)
 - Related-proposal graph from the `requires` field, already captured in the data
 
 ## License
