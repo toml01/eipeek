@@ -13,6 +13,9 @@ request**, across `ethereum/EIPs` and `ethereum/ERCs`, bundled with the extensio
 **No network requests are made while you browse** — the dataset is in the
 package, so the pages you read stay on your machine.
 
+Have feedback? [Open a GitHub issue](https://github.com/toml01/eipeek/issues/new?template=feedback.yml)
+for bugs, database corrections, feature requests, or general comments.
+
 ## Install (development)
 
 ```sh

@@ -129,6 +129,16 @@ textarea {
   font-size: 12px;
 }
 
+.feedback {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.feedback-link {
+  display: inline-block;
+  margin-top: 9px;
+}
+
 footer {
   margin-top: 24px;
   padding-top: 14px;

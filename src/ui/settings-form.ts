@@ -1,5 +1,6 @@
 import { getSettings, setSettings } from '../core/settings';
 import { DEFAULT_SETTINGS, type Settings } from '../core/types';
+import { FEEDBACK_ISSUE_URL } from './feedback';
 import './settings-form.css';
 
 /**
@@ -121,6 +122,20 @@ const FORM = `
   </div>
 
   <p class="saved" id="saved" hidden>Saved</p>
+
+  <section class="feedback" aria-labelledby="feedback-heading">
+    <strong id="feedback-heading">Feedback</strong>
+    <small>
+      Found a bug, a database mistake, or have an idea? Share it on GitHub.
+    </small>
+    <a
+      class="feedback-link"
+      data-testid="feedback-link"
+      href="${FEEDBACK_ISSUE_URL}"
+      target="_blank"
+      rel="noopener noreferrer"
+    >Open a GitHub issue</a>
+  </section>
 
   <footer>
     Data generated from

@@ -1,0 +1,30 @@
+name: Feedback
+description: Report a bug or database mistake, request a feature, or leave a comment.
+title: "[Feedback]: "
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What would you like to share?
+      options:
+        - Bug report
+        - Database correction
+        - Feature request
+        - General comment
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Please include enough context for us to understand your feedback.
+      placeholder: Tell us what you noticed or what would make EIPeek better.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Optional context
+      description: For bugs, steps to reproduce or screenshots are especially helpful.
+    validations:
+      required: false

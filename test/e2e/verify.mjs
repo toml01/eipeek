@@ -159,6 +159,55 @@ try {
   // shadows the global one in this module.
   const extensionId = /^chrome-extension:\/\/([a-z]+)\//.exec(worker.url())?.[1];
 
+  // --- Extension pages: feedback opens the repository issue form --------
+  const feedbackIssueUrl = 'https://github.com/toml01/eipeek/issues/new?template=feedback.yml';
+  for (const extensionPage of ['popup.html', 'options.html']) {
+    const extensionPageTab = await browser.newPage();
+    await extensionPageTab.goto(`chrome-extension://${extensionId}/${extensionPage}`);
+    await extensionPageTab.waitForSelector('[data-testid="feedback-link"]');
+    const feedbackLink = await extensionPageTab.$eval('[data-testid="feedback-link"]', (link) => ({
+      href: link.href,
+      target: link.target,
+      rel: link.rel,
+    }));
+    check(`${extensionPage} links to the feedback issue draft`, feedbackLink.href === feedbackIssueUrl, feedbackLink.href);
+    check(
+      `${extensionPage} feedback link opens safely in a new tab`,
+      feedbackLink.target === '_blank' && feedbackLink.rel.includes('noopener') && feedbackLink.rel.includes('noreferrer'),
+      `${feedbackLink.target} ${feedbackLink.rel}`,
+    );
+    check(
+      `${extensionPage} has no mailto feedback form`,
+      (await extensionPageTab.$$('[href^="mailto:"], #feedbackCategory, #feedbackMessage')).length === 0,
+    );
+
+    if (extensionPage === 'popup.html') {
+      const targetsBeforeClick = new Set(await browser.targets());
+      await extensionPageTab.click('[data-testid="feedback-link"]');
+      const opened = await waitFor(
+        async () =>
+          (await browser.targets()).find(
+            (target) => !targetsBeforeClick.has(target) && target.type() === 'page',
+          ),
+        8000,
+      );
+      const openedUrl = opened?.url() ?? '';
+      const redirectedToLogin = (() => {
+        if (!openedUrl.startsWith('https://github.com/login?')) return false;
+        const returnTo = new globalThis.URL(openedUrl).searchParams.get('return_to');
+        return returnTo === feedbackIssueUrl;
+      })();
+      check(
+        'clicking feedback opens the GitHub issue draft',
+        openedUrl === feedbackIssueUrl || redirectedToLogin,
+        openedUrl || 'no new tab',
+      );
+      if (opened) await (await opened.page())?.close();
+    }
+
+    await extensionPageTab.close();
+  }
+
   /** Settings live behind the extension origin, so drive them from its own page. */
   const setSetting = async (patch) => {
     const opts = await browser.newPage();

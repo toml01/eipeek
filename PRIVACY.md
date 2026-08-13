@@ -74,4 +74,6 @@ effective date.
 
 ## Contact
 
-Open an issue at <https://github.com/toml01/eipeek/issues>.
+The extension's feedback link opens a GitHub issue form in a new tab. EIPeek
+does not collect or send feedback itself; anything you submit is handled by
+GitHub under its own policies.
