@@ -1,4 +1,5 @@
 import { lookup } from '../core/dataset';
+import { FEEDBACK_ISSUE_URL } from '../core/feedback';
 import { aliasNumbers, linksFor, statusLine } from '../core/links';
 import { canonicalLabel, isKindMismatch } from '../core/match';
 import { isUnmerged, type Match, type Proposal } from '../core/types';
@@ -127,6 +128,14 @@ export class Tooltip {
       a.textContent = link.label;
       links.append(a);
     }
+    const feedback = document.createElement('a');
+    feedback.className = 'feedback-link';
+    feedback.dataset.testid = 'tooltip-feedback-link';
+    feedback.href = FEEDBACK_ISSUE_URL;
+    feedback.target = '_blank';
+    feedback.rel = 'noopener noreferrer';
+    feedback.textContent = 'Mistake?';
+    links.append(feedback);
     entry.append(links);
     return entry;
   }
@@ -345,6 +354,18 @@ const CSS_TEXT = `
     font-weight: 500;
   }
   .links a:hover { text-decoration: underline; }
+  .links .feedback-link {
+    margin-left: auto;
+    color: #777783;
+    font-size: 11px;
+    font-weight: 400;
+  }
+  .links .feedback-link:hover { color: #4f46e5; }
+  .links .feedback-link:focus-visible {
+    outline: 2px solid #4f46e5;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
 
   @media (prefers-color-scheme: dark) {
     .card {
@@ -366,5 +387,8 @@ const CSS_TEXT = `
     .desc { color: #b8b8c0; }
     .links { background: #26272b; border-top-color: rgb(255 255 255 / 0.08); }
     .links a { color: #9b91ff; }
+    .links .feedback-link { color: #a7a7b0; }
+    .links .feedback-link:hover { color: #b7b0ff; }
+    .links .feedback-link:focus-visible { outline-color: #b7b0ff; }
   }
 `;

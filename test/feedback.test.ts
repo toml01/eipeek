@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FEEDBACK_ISSUE_URL } from '../src/ui/feedback';
+import { FEEDBACK_ISSUE_URL } from '../src/core/feedback';
 
 describe('feedback issue link', () => {
   it('opens the repository-owned feedback issue form', () => {

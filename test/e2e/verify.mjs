@@ -457,7 +457,29 @@ try {
   );
   check('tooltip shows the title', shadowText.includes('Set Code for EOAs'));
   check('tooltip shows status and category', shadowText.includes('Final') && shadowText.includes('Core'));
-  check('tooltip shows links', ['Spec', 'Discussion', 'Source'].every((l) => shadowText.includes(l)));
+  check('tooltip shows links', ['Spec', 'Discussion', 'Source', 'Mistake?'].every((l) => shadowText.includes(l)));
+  const tooltipFeedbackLink = await cdp.send('DOM.getDocument', { depth: -1, pierce: true }).then(({ root }) => {
+    const find = (node) => {
+      const attrs = Object.fromEntries(
+        Array.from({ length: (node.attributes ?? []).length / 2 }, (_, i) => [node.attributes[i * 2], node.attributes[i * 2 + 1]]),
+      );
+      if (attrs['data-testid'] === 'tooltip-feedback-link') return attrs;
+      for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])]) {
+        const found = find(child);
+        if (found) return found;
+      }
+      return null;
+    };
+    return find(root);
+  });
+  check(
+    'tooltip mistake link targets the feedback issue draft safely',
+    tooltipFeedbackLink?.href === feedbackIssueUrl &&
+      tooltipFeedbackLink.target === '_blank' &&
+      tooltipFeedbackLink.rel?.includes('noopener') &&
+      tooltipFeedbackLink.rel?.includes('noreferrer'),
+    JSON.stringify(tooltipFeedbackLink),
+  );
 
   // --- 7. EIP/ERC mix-up note ------------------------------------------
   await hoverIn('#crosskind');

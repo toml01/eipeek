@@ -1,6 +1,6 @@
 import { getSettings, setSettings } from '../core/settings';
 import { DEFAULT_SETTINGS, type Settings } from '../core/types';
-import { FEEDBACK_ISSUE_URL } from './feedback';
+import { FEEDBACK_ISSUE_URL } from '../core/feedback';
 import './settings-form.css';
 
 /**
