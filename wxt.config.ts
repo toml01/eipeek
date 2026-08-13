@@ -14,6 +14,15 @@ const ICONS = {
 
 export default defineConfig({
   srcDir: 'src',
+  // Extension pages live in separate execution worlds. Vite's module-preload
+  // hints for shared chunks cross those worlds in Chromium, which makes the
+  // browser reject the preload and log a misleading warning. The imports still
+  // load normally for each page; only the speculative preload is removed.
+  vite: () => ({
+    build: {
+      modulePreload: false,
+    },
+  }),
   // publicDir defaults to <root>/public even when srcDir moves, so say it:
   // everything shipped lives under src/. Contents are copied to the bundle
   // root, which is what makes the icons resolve as `icon/16.png`.

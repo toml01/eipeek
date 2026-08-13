@@ -48,6 +48,18 @@ if (!existsSync(EXT)) {
   process.exit(1);
 }
 
+// Vite module-preload hints do not work across Chrome extension execution
+// worlds. In particular, a shared popup/options chunk triggers Chrome's
+// "cross-world extension resource mismatch" warning. Keep this assertion on
+// built HTML so a Vite/WXT upgrade cannot quietly reintroduce it.
+for (const file of ['popup.html', 'options.html']) {
+  const html = await readFile(path.join(EXT, file), 'utf8');
+  if (/<link\s+[^>]*rel=["']modulepreload["']/i.test(html)) {
+    console.error(`FATAL: ${file} contains a modulepreload link.`);
+    process.exit(1);
+  }
+}
+
 // Serve the fixture over http: content scripts do not run on file:// URLs
 // unless the extension is granted file access.
 const fixture = await readFile(path.join(HERE, 'fixture.html'), 'utf8');
