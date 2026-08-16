@@ -170,18 +170,18 @@ eips.ethereum.org).
 
 Two things make this harder than it sounds.
 
-**A number can be claimed by more than one PR, and a claim can be invalid.**
-EIP-8361 is claimed by two unrelated proposals. An editor ruled on
+**A number can refer to more than one proposal, and a claim can be invalid.**
+EIP-8361 referred to two unrelated proposals while both were open. An editor ruled on
 [#12081](https://github.com/ethereum/EIPs/pull/12081):
 
 > EIP numbers cannot be self-assigned […] EIP-8361 has already been allocated to
 > another proposal (PR #12075).
 
-None of the obvious signals identify the invalid claim: CI passes on both, and
-#12075 (the legitimate one) is a GitHub *draft* while #12081 is not, so filtering
-drafts would keep the wrong one. Only PR creation order agrees with the editor, so
-that decides **display order** — never suppression. The tooltip shows every
-claimant in full and lets the reader judge.
+None of the obvious signals identified the invalid claim: CI passed on both, and
+#12075 (the legitimate one) was a GitHub *draft* while #12081 was not, so filtering
+drafts would have kept the wrong one. Among open proposals, PR creation order
+therefore decides **display order** — never suppression. Merged proposals are
+authoritative and display first. The tooltip still shows every claimant in full.
 
 **A renumbered proposal keeps being discussed under its old number.** Tapered
 Issuance Burn self-assigned 8361; its real number is **8363** — the Hegotá list
@@ -192,23 +192,24 @@ is filed under the number an editor assigned and still answers to the stale ones
 via `data/aliases.json`:
 
 ```json
-[{ "canonical": 8363, "alsoKnownAs": [8361], "target": { "pr": 12081, "repo": "EIPs" }, "reason": "…" }]
+[{ "canonical": 8363, "alsoKnownAs": [8361], "target": { "n": 8363 }, "reason": "…" }]
 ```
 
 Hovering 8361 therefore shows a card headed **EIP-8363** with *also EIP-8361* — the
-reference resolves, and the reader is corrected rather than confirmed. Note the PR
-file is still named `eip-8361.md`, so the source link uses the filename while the
-display uses the canonical number. (PR #12081 has since renamed its file, so that
-entry now only carries the alias — but ERC-8351 shows the same shape live, where
-the file is still `erc-8338.md`.)
+reference resolves, and the reader is corrected rather than confirmed. EIP-8363
+has since merged under its canonical filename, so its alias now targets the merged
+proposal directly. ERC-8351 shows the open-PR form of the same situation: its file
+is still `erc-8338.md`, so the source link follows that filename while the display
+uses the canonical number.
 
 That file is **hand-maintained on purpose**. Renumberings are rare, and automated
 title-matching would risk silently merging unrelated proposals. Targets are keyed
-by PR number because "the proposal at 8361" is ambiguous while "the proposal from
-PR #12081" is not. Every entry needs a `reason`, and the build fails if a target
-has gone missing or if two proposals claim the same canonical number. An alias
-*overlapping* another proposal's number is fine — that is the contested case, and
-both get shown.
+by PR number while a proposal is open, because "the proposal at 8361" is ambiguous
+while "the proposal from PR #12081" is not. Once merged, the target uses its
+canonical proposal number. Every entry needs a `reason`, and the build fails if a
+target has gone missing or if two proposals claim the same canonical number. An
+alias *overlapping* another proposal's number is fine — that is the contested
+case, and both get shown.
 
 ### Finding renumberings
 

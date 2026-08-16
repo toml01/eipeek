@@ -55,8 +55,8 @@ export interface Proposal {
   /** PR creation time -- decides display order among rival claims */ prOpened?: string;
   /**
    * The number in the PR's filename, when it differs from the canonical `n`.
-   * Needed for the source link: PR #12081 still ships eip-8361.md even though
-   * the proposal is now EIP-8363.
+   * Needed for the source link: an open PR can retain a self-assigned filename
+   * after editors assign the proposal a different canonical number.
    */
   prFileN?: number;
 
@@ -425,9 +425,9 @@ async function collectOpenPRs(merged: Set<number>): Promise<Proposal[]> {
  * Applies data/aliases.json, so one proposal can resolve under several numbers
  * and be filed under the number an editor actually assigned it.
  *
- * Targets are keyed by PR number rather than proposal number: "the proposal at
- * 8361" is ambiguous when two PRs claim it, whereas "the proposal from PR #12081"
- * never is.
+ * Open-PR targets are keyed by PR number rather than proposal number: "the
+ * proposal at 8361" is ambiguous when two PRs claim it, whereas "the proposal
+ * from PR #12081" never is. Merged targets use their canonical proposal number.
  */
 async function applyAliases(
   merged: Map<number, Proposal>,
@@ -463,9 +463,9 @@ async function applyAliases(
 
     // Two proposals both claiming to canonically be one number is a genuine
     // conflict a human has to resolve.
-    const canonicalOwner =
-      merged.get(entry.canonical) ??
-      unmerged.find((p) => p !== target && p.n === entry.canonical);
+    const canonicalOwner = [...merged.values(), ...unmerged].find(
+      (p) => p !== target && p.n === entry.canonical,
+    );
     if (canonicalOwner) {
       errors.push(
         `${label}: ${entry.canonical} is already the number of ` +

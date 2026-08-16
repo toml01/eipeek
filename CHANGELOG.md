@@ -10,3 +10,4 @@
 ### Fixed
 
 - Removed extension-page preload warnings.
+- Preserved proposal aliases after their source pull requests merge.

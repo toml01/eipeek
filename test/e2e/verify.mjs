@@ -507,9 +507,8 @@ try {
     const t = await waitForTooltip('Transaction Validity Proofs');
     console.log(`      tooltip: ${summarize(t)}`);
     check('contested number shows both claimants', t.includes('Transaction Validity Proofs') && t.includes('Tapered Issuance Burn'));
-    check('each claimant is badged UNMERGED', (t.match(/UNMERGED/g) ?? []).length >= 2);
-    check('claimants link to their pull requests', t.includes('Pull request'));
-    check('contested tooltip offers no dead Spec link', !t.includes('| Spec |'));
+    check('open and merged claimants have distinct states', (t.match(/UNMERGED/g) ?? []).length === 1);
+    check('claimants link to their pull request and specification', t.includes('Pull request') && t.includes('| Spec |'));
     // Hovering the stale 8361 must still lead with 8363 for that claimant, so the
     // reader is corrected rather than confirmed.
     check('renumbered claimant is headed by its canonical number', t.includes('EIP-8363'));
@@ -543,6 +542,7 @@ try {
     check('canonical number resolves to the proposal', t.includes('Tapered Issuance Burn'));
     check('tooltip names the stale number as an alias', t.includes('also EIP-8361'));
     check('tooltip is headed by the canonical number', t.includes('EIP-8363'));
+    check('canonical alias is shown as merged with a specification', t.includes('| Spec |') && !t.includes('UNMERGED'));
   } else {
     check('alias resolves to the same proposal', false, 'no highlight to hover');
   }

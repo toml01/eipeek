@@ -2,8 +2,8 @@
   {
     "canonical": 8363,
     "alsoKnownAs": [8361],
-    "target": { "pr": 12081, "repo": "EIPs" },
-    "reason": "Discussion still says 8361; PR #12081 has since renamed its file, so only the alias still does work."
+    "target": { "n": 8363 },
+    "reason": "Discussion still says 8361; EIP-8363 is the editor-assigned canonical number."
   },
   {
     "canonical": 8351,

@@ -93,17 +93,14 @@ describe('dataset integrity', () => {
 });
 
 describe('contested numbers', () => {
-  it('returns every claimant, earliest pull request first', () => {
-    // EIP-8361: #12075 "Transaction Validity Proofs" holds it legitimately, and
-    // #12081 "Tapered Issuance Burn" self-assigned it. An editor confirmed the
-    // allocation to #12075, and PR creation order is the only signal that agrees
-    // -- CI passes on both, and #12075 is a GitHub *draft* while #12081 is not,
-    // so ordering by last-updated or filtering drafts would rank the invalid
-    // claim first.
+  it('returns the merged canonical proposal and the remaining open claimant', () => {
+    // EIP-8361 is still the real number for #12075 "Transaction Validity Proofs".
+    // The now-merged "Tapered Issuance Burn" was reassigned to 8363, but retains
+    // 8361 as an alias because discussions still refer to that stale number.
     const claims = resolve(8361);
     expect(claims.length).toBeGreaterThanOrEqual(2);
-    expect(claims.every(isUnmerged)).toBe(true);
-    expect(claims[0]!.pr).toBe(12075);
+    expect(claims.some((p) => !isUnmerged(p) && p.n === 8363)).toBe(true);
+    expect(claims.find(isUnmerged)!.pr).toBe(12075);
   });
 
   it('sorts merged before unmerged within one number', () => {
@@ -126,6 +123,7 @@ describe('aliases', () => {
     expect(p[0]!.n).toBe(8363);
     expect(p[0]!.t).toBe('Tapered Issuance Burn');
     expect(p[0]!.aka).toEqual([8361]);
+    expect(isUnmerged(p[0]!)).toBe(false);
   });
 
   it('still resolves the stale number people actually write', () => {
@@ -241,14 +239,12 @@ describe('links', () => {
     expect(sourceUrl(resolve(4337)[0]!)).toContain('/ethereum/ERCs/blob/master/ERCS/erc-4337.md');
   });
 
-  it('replaces the spec link with the pull request when unmerged', () => {
-    // eips.ethereum.org/EIPS/eip-8363 is a 404, so linking it would be worse
-    // than useless.
+  it('links the merged canonical proposal to its specification', () => {
     const p = resolve(8363)[0]!;
     const labels = linksFor(p).map((l) => l.label);
-    expect(labels).toContain('Pull request');
-    expect(labels).not.toContain('Spec');
-    expect(linksFor(p)[0]!.url).toBe('https://github.com/ethereum/EIPs/pull/12081');
+    expect(labels).toContain('Spec');
+    expect(labels).not.toContain('Pull request');
+    expect(linksFor(p).find((l) => l.label === 'Spec')!.url).toBe(specUrl(8363));
   });
 
   it('pins an unmerged source link to the fork and head commit', () => {
