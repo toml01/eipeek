@@ -19,7 +19,14 @@ const aliases = JSON.parse(readFileSync('data/aliases.json', 'utf8')) as Array<{
   reason: string;
 }>;
 
+const canonicalJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+
 describe('dataset integrity', () => {
+  it('keeps committed dataset JSON canonically formatted for review', () => {
+    const raw = readFileSync('data/eips.json', 'utf8');
+    expect(raw).toBe(canonicalJson(JSON.parse(raw)));
+  });
+
   it('has a plausible number of proposals in each tier', () => {
     expect(merged.length).toBeGreaterThan(1100);
     expect(merged.length).toBeLessThan(1600);
@@ -114,6 +121,11 @@ describe('contested numbers', () => {
 });
 
 describe('aliases', () => {
+  it('keeps committed alias JSON canonically formatted for review', () => {
+    const raw = readFileSync('data/aliases.json', 'utf8');
+    expect(raw).toBe(canonicalJson(JSON.parse(raw)));
+  });
+
   it('files a renumbered proposal under the number an editor assigned', () => {
     // 8363 is the real number: the Hegota list cites it, and the Magicians thread
     // redirects to eip-8363-tapered-issuance-burn. 8361 was self-assigned and an

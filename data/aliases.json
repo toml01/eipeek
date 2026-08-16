@@ -1,14 +1,23 @@
 [
   {
     "canonical": 8363,
-    "alsoKnownAs": [8361],
-    "target": { "n": 8363 },
+    "alsoKnownAs": [
+      8361
+    ],
+    "target": {
+      "n": 8363
+    },
     "reason": "Discussion still says 8361; EIP-8363 is the editor-assigned canonical number."
   },
   {
     "canonical": 8351,
-    "alsoKnownAs": [8338],
-    "target": { "pr": 1913, "repo": "ERCs" },
+    "alsoKnownAs": [
+      8338
+    ],
+    "target": {
+      "pr": 1913,
+      "repo": "ERCs"
+    },
     "reason": "Editors assigned 8351; the file is still erc-8338.md, and 8338 is also claimed by PR #1879."
   }
 ]

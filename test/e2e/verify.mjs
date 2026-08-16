@@ -9,7 +9,7 @@
  */
 import puppeteer from 'puppeteer-core';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -58,6 +58,30 @@ for (const file of ['popup.html', 'options.html']) {
     console.error(`FATAL: ${file} contains a modulepreload link.`);
     process.exit(1);
   }
+}
+
+// data/eips.json is pretty in git, but WXT/Vite embeds a compact JSON string in
+// the production service worker. aliases.json is maintenance-only and must not
+// be copied into the extension at all.
+const builtBackground = await readFile(path.join(EXT, 'background.js'), 'utf8');
+const compactBackground = builtBackground.endsWith('\n')
+  ? builtBackground.slice(0, -1)
+  : builtBackground;
+if (compactBackground.includes('\n')) {
+  console.error('FATAL: background.js does not contain the compact production dataset.');
+  process.exit(1);
+}
+const shippedFiles = await readdir(EXT, { recursive: true });
+if (shippedFiles.some((file) => path.basename(file) === 'aliases.json')) {
+  console.error('FATAL: maintenance-only data/aliases.json was copied into the extension.');
+  process.exit(1);
+}
+const aliasEntries = JSON.parse(
+  await readFile(path.resolve(HERE, '../../data/aliases.json'), 'utf8'),
+);
+if (aliasEntries.some(({ reason }) => reason && builtBackground.includes(reason))) {
+  console.error('FATAL: alias maintenance reasons were embedded in background.js.');
+  process.exit(1);
 }
 
 // Serve the fixture over http: content scripts do not run on file:// URLs

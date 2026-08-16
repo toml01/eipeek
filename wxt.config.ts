@@ -21,6 +21,10 @@ export default defineConfig({
   vite: () => ({
     build: {
       modulePreload: false,
+      // The committed dataset stays pretty for review. Its JSON import is
+      // embedded in background.js, and production/package output alone gets
+      // compacted so source formatting costs no extension bytes.
+      minify: 'esbuild',
     },
   }),
   // publicDir defaults to <root>/public even when srcDir moves, so say it:

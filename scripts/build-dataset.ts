@@ -657,7 +657,10 @@ async function main() {
   );
 
   await mkdir(path.dirname(OUT_JSON), { recursive: true });
-  await writeFile(OUT_JSON, `${JSON.stringify(sorted)}\n`);
+  // Keep the committed source reviewable. WXT/Vite minifies this JSON when it
+  // embeds the import in the production background bundle, so whitespace here
+  // does not increase the shipped extension size.
+  await writeFile(OUT_JSON, `${JSON.stringify(sorted, null, 2)}\n`);
 
   // Number-only indexes, inlined into the content script so that pages with no
   // EIP references never pull in the full metadata payload. Split by tier so the
@@ -679,11 +682,12 @@ async function main() {
       `export const UNMERGED_NUMBERS: readonly number[] = [\n${chunk(unmergedNums)}\n];\n`,
   );
 
+  // Report the compact payload size, which is the form embedded by WXT/Vite.
   const bytes = Buffer.byteLength(JSON.stringify(sorted));
   const aliased = sorted.filter((p) => p.aka?.length);
   log(
     `  wrote data/eips.json (${merged.size} merged + ${unmerged.length} open-PR ` +
-      `= ${sorted.length}, ${(bytes / 1024).toFixed(1)} KB)`,
+      `= ${sorted.length}, ${(bytes / 1024).toFixed(1)} KB minified payload)`,
   );
   log(`  wrote src/core/numbers.generated.ts (${mergedNums.length} + ${unmergedNums.length} numbers)`);
   if (aliased.length) log(`  ${aliased.length} proposal(s) carry aliases`);

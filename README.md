@@ -315,6 +315,10 @@ fetchable extension URL for a page to probe for.
 ## The dataset
 
 `data/eips.json` is generated and committed; `data/aliases.json` is hand-written.
+Both are canonical pretty JSON so their diffs stay readable. WXT imports only
+`data/eips.json` and minifies it into the production `background.js` bundle;
+`data/aliases.json` and its maintenance reasons are not shipped.
+
 Regenerate with:
 
 ```sh
