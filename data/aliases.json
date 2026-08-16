@@ -7,7 +7,7 @@
     "target": {
       "n": 8363
     },
-    "reason": "Discussion still says 8361; EIP-8363 is the editor-assigned canonical number."
+    "reason": "Editors assigned EIP-8363; discussions reference EIP-8361."
   },
   {
     "canonical": 8351,
@@ -18,6 +18,51 @@
       "pr": 1913,
       "repo": "ERCs"
     },
-    "reason": "Editors assigned 8351; the file is still erc-8338.md, and 8338 is also claimed by PR #1879."
+    "reason": "Editors assigned ERC-8351; PR #1913 uses erc-8338.md; PR #1879 claims ERC-8338."
+  },
+  {
+    "canonical": 8247,
+    "alsoKnownAs": [
+      8242
+    ],
+    "target": {
+      "pr": 11595,
+      "repo": "EIPs"
+    },
+    "reason": "Editors assigned EIP-8247; PR #11595 still uses eip-8242.md; ERCs PR #1634 claims ERC-8242."
+  },
+  {
+    "canonical": 8379,
+    "alsoKnownAs": [
+      8373
+    ],
+    "target": {
+      "pr": 12154,
+      "repo": "EIPs"
+    },
+    "reason": "Editors assigned EIP-8379; PR #12154 still uses eip-8373.md."
+  },
+  {
+    "canonical": 7989,
+    "alsoKnownAs": [
+      7933,
+      7965
+    ],
+    "target": {
+      "pr": 1119,
+      "repo": "ERCs"
+    },
+    "reason": "Editor commit renumbered PR #1119 from ERC-7965 to ERC-7989; prior EIPs PR used EIP-7933."
+  },
+  {
+    "canonical": 8190,
+    "alsoKnownAs": [
+      8184
+    ],
+    "target": {
+      "pr": 1592,
+      "repo": "ERCs"
+    },
+    "reason": "Editors assigned ERC-8190; PR #1592 previously used erc-8184.md."
   }
 ]

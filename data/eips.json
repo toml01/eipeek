@@ -14715,7 +14715,11 @@
     "prRepo": "ERCs",
     "prRef": "421a58cc327d3feac83b0857133992abe51d3bf5",
     "prHead": "frani/ERCs",
-    "prOpened": "2025-07-10T17:21:49Z"
+    "prOpened": "2025-07-10T17:21:49Z",
+    "aka": [
+      7933,
+      7965
+    ]
   },
   {
     "n": 7990,
@@ -17653,7 +17657,10 @@
     "prRepo": "ERCs",
     "prRef": "057d3908d31e88bc5f3d7f49892e48ddcda4ffd5",
     "prHead": "kimbo128/ERCs",
-    "prOpened": "2026-03-10T17:44:16Z"
+    "prOpened": "2026-03-10T17:44:16Z",
+    "aka": [
+      8184
+    ]
   },
   {
     "n": 8191,
@@ -18577,25 +18584,6 @@
     "prOpened": "2026-03-28T17:10:08Z"
   },
   {
-    "n": 8242,
-    "t": "Ancestor-Indexed BALs",
-    "d": "Compact references to recent block access lists for repeated addresses and storage slots",
-    "s": "Draft",
-    "ty": "Standards Track",
-    "c": "Core",
-    "k": "eip",
-    "disc": "https://ethereum-magicians.org/t/eip-8242-ancestor-indexed-bals/00000",
-    "cr": "2026-05-03",
-    "req": [
-      7928
-    ],
-    "pr": 11595,
-    "prRepo": "EIPs",
-    "prRef": "f194c9f17956f19b6a9e6960d7f4cf3a40c25961",
-    "prHead": "nerolation/EIPs",
-    "prOpened": "2026-05-03T16:58:31Z"
-  },
-  {
     "n": 8243,
     "t": "Batching Attestations at Source",
     "d": "Allow validators scheduled for duty on the same committee to publish a single pre-aggregated attestation in place of N individual ones",
@@ -18661,6 +18649,29 @@
     "req": [
       161,
       6780
+    ]
+  },
+  {
+    "n": 8247,
+    "t": "Ancestor-Indexed BALs",
+    "d": "Compact references to recent block access lists for repeated addresses and storage slots",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/eip-8242-ancestor-indexed-bals/00000",
+    "cr": "2026-05-03",
+    "req": [
+      7928
+    ],
+    "pr": 11595,
+    "prRepo": "EIPs",
+    "prRef": "f194c9f17956f19b6a9e6960d7f4cf3a40c25961",
+    "prHead": "nerolation/EIPs",
+    "prOpened": "2026-05-03T16:58:31Z",
+    "prFileN": 8242,
+    "aka": [
+      8242
     ]
   },
   {
@@ -20687,7 +20698,7 @@
     "req": [],
     "pr": 12151,
     "prRepo": "EIPs",
-    "prRef": "2840a32c94d47fb60487acd6abdc97a67fccf2a3",
+    "prRef": "d5e5b3f0a220ba806434190d46191532908a3be1",
     "prHead": "minksy-ux/EIPs",
     "prOpened": "2026-08-13T03:40:48Z"
   },
@@ -20804,23 +20815,6 @@
     "prOpened": "2026-08-06T10:42:31Z"
   },
   {
-    "n": 8373,
-    "t": "Top-up Sync",
-    "d": "CL-driven EL synchronization by exposing the execution client head and distinguishing missing state from missing history in the engine API",
-    "s": "Draft",
-    "ty": "Standards Track",
-    "c": "Core",
-    "k": "eip",
-    "disc": "https://ethereum-magicians.org/t/eip-0000-top-up-sync/29405",
-    "cr": "2026-08-06",
-    "req": [],
-    "pr": 12154,
-    "prRepo": "EIPs",
-    "prRef": "78e6c35e1ddbec1bfc9698ad190b8ccc1a6b8c60",
-    "prHead": "RazorClient/EIPs",
-    "prOpened": "2026-08-13T12:02:15Z"
-  },
-  {
     "n": 8374,
     "t": "Persist Warm Access Sets Across Reverts",
     "d": "Accessed addresses and storage keys stay warm when a call frame reverts, as the data is already loaded by the client",
@@ -20918,6 +20912,27 @@
     "prRef": "e71482a515a363c1b4590a92beb5437cd134e4fb",
     "prHead": "K2eno/ERCs",
     "prOpened": "2026-08-10T21:49:39Z"
+  },
+  {
+    "n": 8379,
+    "t": "Top-up Sync",
+    "d": "CL-driven EL synchronization by exposing the execution client head and distinguishing missing state from missing history in the engine API",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/eip-0000-top-up-sync/29405",
+    "cr": "2026-08-06",
+    "req": [],
+    "pr": 12154,
+    "prRepo": "EIPs",
+    "prRef": "78e6c35e1ddbec1bfc9698ad190b8ccc1a6b8c60",
+    "prHead": "RazorClient/EIPs",
+    "prOpened": "2026-08-13T12:02:15Z",
+    "prFileN": 8373,
+    "aka": [
+      8373
+    ]
   },
   {
     "n": 9000,
