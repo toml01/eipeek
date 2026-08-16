@@ -5,6 +5,7 @@ node_modules/
 *.zip
 .DS_Store
 *.log
+data-maintenance.log
 fixture-shot.png
 icon-contact-sheet.png
 contested-shot.png

@@ -337,6 +337,9 @@ Open-PR aliases expire 180 days after the PR was opened. Younger aliases are
 reviewed using upstream evidence for stagnation, obsolescence, and continued
 usefulness.
 
+Each run appends its outcome, summary, problems, and workflow recommendations
+to the gitignored `data-maintenance.log` file.
+
 The underlying commands remain available directly:
 
 ```sh
