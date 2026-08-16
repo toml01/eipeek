@@ -18,6 +18,7 @@ import { createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import yaml from 'js-yaml';
 
 const exec = promisify(execFile);
@@ -26,6 +27,10 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const CACHE = path.join(ROOT, '.cache');
 const OUT_JSON = path.join(ROOT, 'data', 'eips.json');
 const OUT_NUMBERS = path.join(ROOT, 'src', 'core', 'numbers.generated.ts');
+
+/** Maximum age for an alias targeting an open pull request. */
+export const DEFAULT_STALE_ALIAS_DAYS = 180;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const SOURCES = [
   // ERCs first, so that the EIPs copy wins the sole real cross-repo collision
@@ -470,6 +475,14 @@ async function applyAliases(
       continue;
     }
 
+    if (entry.target.pr !== undefined && isStaleOpenAlias(target)) {
+      errors.push(
+        `${label}: target ${JSON.stringify(entry.target)} has been open for at least ` +
+          `${DEFAULT_STALE_ALIAS_DAYS} days; retire the alias`,
+      );
+      continue;
+    }
+
     // Two proposals both claiming to canonically be one number is a genuine
     // conflict a human has to resolve.
     const canonicalOwner = [...merged.values(), ...unmerged].find(
@@ -609,6 +622,9 @@ function validateUnmerged(unmerged: Proposal[], merged: Map<number, Proposal>): 
     if (!p.pr || !p.prRepo || !p.prRef || !p.prOpened) {
       errors.push(`${at}: incomplete PR provenance`);
     }
+    if (p.prOpened && !Number.isFinite(Date.parse(p.prOpened))) {
+      errors.push(`${at}: invalid PR creation time ${JSON.stringify(p.prOpened)}`);
+    }
     if (!p.t) errors.push(`${at}: missing title`);
     // Everything real is 4 digits by now; a low number here means a placeholder
     // or a misparse rather than a genuine proposal.
@@ -632,6 +648,19 @@ function fail(errors: string[]): never {
 /** Every number a proposal answers to: its own, plus any curated aliases. */
 function numbersOf(p: Proposal): number[] {
   return [p.n, ...(p.aka ?? [])];
+}
+
+/**
+ * An alias targeting an open pull request expires at the configured boundary.
+ */
+export function isStaleOpenAlias(
+  proposal: Pick<Proposal, 'pr' | 'prOpened'>,
+  now = Date.now(),
+  thresholdDays = DEFAULT_STALE_ALIAS_DAYS,
+): boolean {
+  if (!proposal.pr || !proposal.prOpened) return false;
+  const opened = Date.parse(proposal.prOpened);
+  return Number.isFinite(opened) && now - opened >= thresholdDays * DAY_MS;
 }
 
 async function main() {
@@ -745,7 +774,9 @@ function chunk(nums: number[]): string {
   return lines.join('\n');
 }
 
-main().catch((err) => {
-  process.stderr.write(`${err instanceof Error ? err.stack : String(err)}\n`);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((err) => {
+    process.stderr.write(`${err instanceof Error ? err.stack : String(err)}\n`);
+    process.exit(1);
+  });
+}

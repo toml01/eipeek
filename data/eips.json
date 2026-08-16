@@ -14715,11 +14715,7 @@
     "prRepo": "ERCs",
     "prRef": "421a58cc327d3feac83b0857133992abe51d3bf5",
     "prHead": "frani/ERCs",
-    "prOpened": "2025-07-10T17:21:49Z",
-    "aka": [
-      7933,
-      7965
-    ]
+    "prOpened": "2025-07-10T17:21:49Z"
   },
   {
     "n": 7990,
@@ -20245,7 +20241,7 @@
     "prOpened": "2026-07-21T15:03:16Z"
   },
   {
-    "n": 8344,
+    "n": 8345,
     "t": "Relational Agent Registry",
     "d": "A registry where an agent is defined as a relationship among two or more humans, anchored to the shared records of that relationship.",
     "s": "Draft",
@@ -20263,7 +20259,11 @@
     "prRepo": "ERCs",
     "prRef": "2dad4d81418996e0878bf8481c28c2e9f7cccf7f",
     "prHead": "kimminhyun-ai/ERCs",
-    "prOpened": "2026-07-22T11:22:38Z"
+    "prOpened": "2026-07-22T11:22:38Z",
+    "prFileN": 8344,
+    "aka": [
+      8344
+    ]
   },
   {
     "n": 8346,
@@ -20698,7 +20698,7 @@
     "req": [],
     "pr": 12151,
     "prRepo": "EIPs",
-    "prRef": "d5e5b3f0a220ba806434190d46191532908a3be1",
+    "prRef": "a6b75117beba67e37714e141de9aa49143c043dd",
     "prHead": "minksy-ux/EIPs",
     "prOpened": "2026-08-13T03:40:48Z"
   },

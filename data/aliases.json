@@ -7,7 +7,7 @@
     "target": {
       "n": 8363
     },
-    "reason": "Editors assigned EIP-8363; discussions reference EIP-8361."
+    "reason": "Editors assigned EIP-8363; PR #12081 previously used eip-8361.md."
   },
   {
     "canonical": 8351,
@@ -40,19 +40,18 @@
       "pr": 12154,
       "repo": "EIPs"
     },
-    "reason": "Editors assigned EIP-8379; PR #12154 still uses eip-8373.md."
+    "reason": "Editors assigned EIP-8379; PR #12154 still uses eip-8373.md; ERCs PR #1932 claims ERC-8373."
   },
   {
-    "canonical": 7989,
+    "canonical": 8345,
     "alsoKnownAs": [
-      7933,
-      7965
+      8344
     ],
     "target": {
-      "pr": 1119,
+      "pr": 1904,
       "repo": "ERCs"
     },
-    "reason": "Editor commit renumbered PR #1119 from ERC-7965 to ERC-7989; prior EIPs PR used EIP-7933."
+    "reason": "Editors assigned ERC-8345; PR #1904 still uses erc-8344.md."
   },
   {
     "canonical": 8190,

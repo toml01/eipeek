@@ -4,6 +4,7 @@ import proposals from '../data/eips.json';
 import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../src/core/numbers.generated';
 import { aliasNumbers, linksFor, sourceUrl, specUrl, statusLine, usableDiscussion } from '../src/core/links';
 import { isUnmerged, type Proposal } from '../src/core/types';
+import { DEFAULT_STALE_ALIAS_DAYS, isStaleOpenAlias } from '../scripts/build-dataset';
 
 const all = proposals as Proposal[];
 const merged = all.filter((p) => !isUnmerged(p));
@@ -73,6 +74,9 @@ describe('dataset integrity', () => {
   it('gives every open-PR proposal full provenance', () => {
     const bad = unmerged.filter((p) => !p.pr || !p.prRepo || !p.prRef || !p.prHead || !p.prOpened);
     expect(bad.map((p) => p.n)).toEqual([]);
+    expect(unmerged.filter((p) => !Number.isFinite(Date.parse(p.prOpened!))).map((p) => p.n)).toEqual(
+      [],
+    );
   });
 
   it('rejects placeholder numbers from open PRs', () => {
@@ -121,6 +125,36 @@ describe('contested numbers', () => {
 });
 
 describe('aliases', () => {
+  it('expires open-PR aliases at the default 180-day boundary', () => {
+    const opened = Date.parse('2026-01-01T00:00:00Z');
+    const alias = { pr: 123, prOpened: '2026-01-01T00:00:00Z', aka: [100] };
+
+    expect(DEFAULT_STALE_ALIAS_DAYS).toBe(180);
+    expect(isStaleOpenAlias(alias, opened + 180 * 24 * 60 * 60 * 1000 - 1)).toBe(false);
+    expect(isStaleOpenAlias(alias, opened + 180 * 24 * 60 * 60 * 1000)).toBe(true);
+  });
+
+  it('only expires aliases targeting open PRs with valid provenance', () => {
+    const now = Date.parse('2026-08-16T00:00:00Z');
+
+    expect(isStaleOpenAlias({ prOpened: '2025-01-01T00:00:00Z' }, now)).toBe(false);
+    expect(isStaleOpenAlias({ pr: 123, prOpened: '2025-01-01T00:00:00Z' }, now)).toBe(true);
+    expect(isStaleOpenAlias({ pr: 123, prOpened: 'invalid' }, now)).toBe(false);
+  });
+
+  it('contains no aliases targeting open PRs at least 180 days old', () => {
+    const now = Date.now();
+    const expired = aliases.filter((entry) => {
+      if (entry.target.pr === undefined) return false;
+      const target = all.find(
+        (proposal) => proposal.pr === entry.target.pr && proposal.prRepo === entry.target.repo,
+      );
+      return target !== undefined && isStaleOpenAlias(target, now);
+    });
+
+    expect(expired).toEqual([]);
+  });
+
   it('keeps committed alias JSON canonically formatted for review', () => {
     const raw = readFileSync('data/aliases.json', 'utf8');
     expect(raw).toBe(canonicalJson(JSON.parse(raw)));

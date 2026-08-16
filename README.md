@@ -333,6 +333,10 @@ investigates aliases from upstream evidence, and leaves the resulting diff for
 review without committing or pushing. Run `codex login` first if the CLI is not
 already authenticated.
 
+Open-PR aliases expire 180 days after the PR was opened. Younger aliases are
+reviewed using upstream evidence for stagnation, obsolescence, and continued
+usefulness.
+
 The underlying commands remain available directly:
 
 ```sh
