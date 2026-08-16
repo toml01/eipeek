@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain EIP Data"
+  short_description: "Maintain and review local EIP proposal data"
+  default_prompt: "Use $maintain-eip-data to rebuild and review the repository EIP dataset."

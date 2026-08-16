@@ -449,6 +449,15 @@ async function applyAliases(
       errors.push(`${label}: missing "reason" -- an undocumented alias is unauditable`);
       continue;
     }
+    if (
+      entry.reason !== entry.reason.trim() ||
+      entry.reason.includes('\n') ||
+      entry.reason.length > 160 ||
+      /\b(?:likely|probably|perhaps|maybe|seems?|appears?)\b/i.test(entry.reason)
+    ) {
+      errors.push(`${label}: "reason" must be one concise factual line (160 characters maximum)`);
+      continue;
+    }
 
     const target =
       entry.target.pr !== undefined

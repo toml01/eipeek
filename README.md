@@ -202,14 +202,16 @@ proposal directly. ERC-8351 shows the open-PR form of the same situation: its fi
 is still `erc-8338.md`, so the source link follows that filename while the display
 uses the canonical number.
 
-That file is **hand-maintained on purpose**. Renumberings are rare, and automated
-title-matching would risk silently merging unrelated proposals. Targets are keyed
+That file is **curated rather than inferred mechanically**. Renumberings are rare,
+and title-matching could silently merge unrelated proposals. The local maintenance
+agent gathers upstream evidence and makes the judgment, while the build remains
+the deterministic validator. Targets are keyed
 by PR number while a proposal is open, because "the proposal at 8361" is ambiguous
 while "the proposal from PR #12081" is not. Once merged, the target uses its
-canonical proposal number. Every entry needs a `reason`, and the build fails if a
-target has gone missing or if two proposals claim the same canonical number. An
-alias *overlapping* another proposal's number is fine — that is the contested
-case, and both get shown.
+canonical proposal number. Every entry needs a concise factual `reason`, and the
+build fails if a target has gone missing or if two proposals claim the same
+canonical number. An alias *overlapping* another proposal's number is fine — that
+is the contested case, and both get shown.
 
 ### Finding renumberings
 
@@ -319,10 +321,23 @@ Both are canonical pretty JSON so their diffs stay readable. WXT imports only
 `data/eips.json` and minifies it into the production `background.js` bundle;
 `data/aliases.json` and its maintenance reasons are not shipped.
 
-Regenerate with:
+For AI-supervised local maintenance, run:
+
+```sh
+npm run data:maintain
+```
+
+This launches a Sol agent through the local Codex CLI and the user's current
+Codex login. It runs the deterministic commands, handles transient failures,
+investigates aliases from upstream evidence, and leaves the resulting diff for
+review without committing or pushing. Run `codex login` first if the CLI is not
+already authenticated.
+
+The underlying commands remain available directly:
 
 ```sh
 npm run data:build   # needs GITHUB_TOKEN, or `gh auth login`
+npm run data:review  # advisory forum redirect check
 ```
 
 The token is only for enumerating open pull requests: listing 756 PRs *with their

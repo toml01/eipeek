@@ -16,6 +16,7 @@
     "icons": "node scripts/build-icons.mjs",
     "store-assets": "node scripts/build-store-assets.mjs",
     "data:build": "tsx scripts/build-dataset.ts",
+    "data:maintain": "tsx scripts/maintain-dataset.ts",
     "data:review": "tsx scripts/review-dataset.ts",
     "postinstall": "wxt prepare"
   },

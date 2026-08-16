@@ -191,6 +191,17 @@ describe('aliases', () => {
     }
   });
 
+  it('keeps alias reasons concise and factual', () => {
+    for (const entry of aliases) {
+      expect(entry.reason, `entry ${entry.canonical}`).toBe(entry.reason.trim());
+      expect(entry.reason, `entry ${entry.canonical}`).not.toContain('\n');
+      expect(entry.reason.length, `entry ${entry.canonical}`).toBeLessThanOrEqual(160);
+      expect(entry.reason, `entry ${entry.canonical}`).not.toMatch(
+        /\b(?:likely|probably|perhaps|maybe|seems?|appears?)\b/i,
+      );
+    }
+  });
+
   it('never gives two proposals the same canonical number', () => {
     for (const entry of aliases) {
       expect(all.filter((p) => p.n === entry.canonical), `entry ${entry.canonical}`).toHaveLength(1);

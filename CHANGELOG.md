@@ -6,6 +6,7 @@
 
 - GitHub issue feedback link.
 - Subtle “Mistake?” feedback links in proposal tooltips.
+- Local AI-supervised dataset maintenance workflow.
 
 ### Fixed
 
