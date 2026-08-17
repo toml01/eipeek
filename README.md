@@ -383,8 +383,11 @@ Mainnet upgrade membership is rebuilt alongside proposal metadata on every run:
 EELS wins when a scheduled relationship becomes activated. Relationships attach
 only to an exact EIP number, never to ERCs, aliases, or transitive `requires`.
 The build deliberately fails on a new scheduled fork name until its common display
-name and chronological position are reviewed and added, so a refresh cannot ship
-plausible-looking but incorrectly ordered upgrade metadata.
+name, chronological position, and canonical hardfork Meta EIP are reviewed and
+added, so a refresh cannot ship plausible-looking but incorrectly ordered or
+unlinked upgrade metadata. Activated fork links come from EELS' fork-specification
+column, while each BPO links to its own Meta EIP. The link target must resolve to a
+merged Meta EIP in the downloaded archive.
 
 **The build validates itself against the published site and upgrade sources** and fails on any
 disagreement — number sets must match exactly in both directions, every title
@@ -401,8 +404,8 @@ Withdrawn inserts *Withdrawn Reason*).
 Upgrade ingestion likewise fails on source schema drift, unrecognized
 relationship statuses, duplicate memberships, missing or ambiguous EIP numbers,
 malformed BPO activation data, and unknown scheduled-fork chronology. The unit
-suite pins representative included, scheduled, declined, multi-upgrade, BPO, and
-ERC-negative cases.
+suite pins representative included, scheduled, declined, multi-upgrade, BPO,
+Meta-link, and ERC-negative cases.
 
 ## Development
 

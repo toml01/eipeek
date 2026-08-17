@@ -49,6 +49,7 @@ export type UpgradeStatus = 'included' | 'scheduled';
 export interface Upgrade {
   /** common upgrade name */ n: string;
   /** whether the upgrade has activated or is formally scheduled */ s: UpgradeStatus;
+  /** canonical hardfork Meta EIP */ m: number;
 }
 
 /** An upstream relationship before it is attached to a compact proposal. */
@@ -56,6 +57,7 @@ export interface UpgradeRelationship {
   proposal: number;
   name: string;
   status: UpgradeStatus;
+  /** canonical hardfork Meta EIP */ meta: number;
   /** Activation chronology for included upgrades; fork chronology for scheduled ones. */
   order: number;
   source: string;
@@ -199,6 +201,25 @@ function splitMarkdownRow(line: string): string[] {
     .map((cell) => cell.trim());
 }
 
+/** Reads the one non-struck-through Meta EIP link from an EELS fork-spec cell. */
+function eelsMetaEip(cell: string, upgrade: string): number {
+  const active = cell.replace(/~+\[[^\]]+\]\([^)]+\)~+/g, '');
+  const matches = [
+    ...active.matchAll(/\[[^\]]*\bMeta EIP-(\d+)\]\((https:\/\/eips\.ethereum\.org\/EIPS\/eip-(\d+))\)/gi),
+  ];
+  if (matches.length !== 1) {
+    throw new Error(
+      `EELS protocol history: ${upgrade} must have exactly one active hardfork Meta EIP`,
+    );
+  }
+  const labelNumber = Number(matches[0]![1]);
+  const urlNumber = Number(matches[0]![3]);
+  if (!Number.isSafeInteger(labelNumber) || labelNumber <= 0 || labelNumber !== urlNumber) {
+    throw new Error(`EELS protocol history: invalid hardfork Meta EIP for ${upgrade}`);
+  }
+  return labelNumber;
+}
+
 /**
  * Parses activated mainnet membership from EELS' protocol history table.
  *
@@ -266,6 +287,7 @@ export function parseEelsProtocolHistory(markdown: string): UpgradeRelationship[
     if (!Number.isFinite(order)) {
       throw new Error(`EELS protocol history: ${name} has included EIPs but no release date`);
     }
+    const meta = eelsMetaEip(cells[4]!, name);
 
     for (const proposal of proposals) {
       const key = `${proposal}\u0000${name}`;
@@ -273,7 +295,7 @@ export function parseEelsProtocolHistory(markdown: string): UpgradeRelationship[
         throw new Error(`EELS protocol history: duplicate relationship EIP-${proposal} / ${name}`);
       }
       seenRelationships.add(key);
-      relationships.push({ proposal, name, status: 'included', order, source: 'EELS' });
+      relationships.push({ proposal, name, status: 'included', meta, order, source: 'EELS' });
     }
   }
 
@@ -297,12 +319,12 @@ const FORKCAST_STATUSES = new Set([
 // Forkcast stores relationships by combined fork name. The explicit roadmap
 // order makes chronology reviewable and ensures a new scheduled name fails the
 // build until its position is known.
-const SCHEDULED_UPGRADE_ORDER = new Map([
-  ['Dencun', 0],
-  ['Pectra', 1],
-  ['Fusaka', 2],
-  ['Glamsterdam', 3],
-  ['Hegotá', 4],
+const SCHEDULED_UPGRADES = new Map<string, { order: number; meta: number }>([
+  ['Dencun', { order: 0, meta: 7569 }],
+  ['Pectra', { order: 1, meta: 7600 }],
+  ['Fusaka', { order: 2, meta: 7607 }],
+  ['Glamsterdam', { order: 3, meta: 7773 }],
+  ['Hegotá', { order: 4, meta: 8081 }],
 ]);
 const SCHEDULED_ORDER_BASE = 4_000_000_000_000;
 
@@ -368,15 +390,16 @@ export function parseForkcastEip(raw: string, filename: string): UpgradeRelation
 
     const latest = record(fork.statusHistory.at(-1), `Forkcast ${filename} ${name} latest status`);
     if (latest.status !== 'Scheduled') continue;
-    const order = SCHEDULED_UPGRADE_ORDER.get(name);
-    if (order === undefined) {
-      throw new Error(`Forkcast ${filename}: no chronological order is known for scheduled ${name}`);
+    const upgrade = SCHEDULED_UPGRADES.get(name);
+    if (!upgrade) {
+      throw new Error(`Forkcast ${filename}: no metadata is known for scheduled ${name}`);
     }
     relationships.push({
       proposal: proposal as number,
       name,
       status: 'scheduled',
-      order: SCHEDULED_ORDER_BASE + order,
+      meta: upgrade.meta,
+      order: SCHEDULED_ORDER_BASE + upgrade.order,
       source: `Forkcast ${filename}`,
     });
   }
@@ -607,6 +630,7 @@ export function bpoRelationships(
         proposal: required,
         name: meta.name,
         status: meta.status,
+        meta: meta.meta,
         order: meta.activation,
         source: `BPO Meta EIP-${meta.meta}`,
       });
@@ -1092,6 +1116,23 @@ export function attachUpgradeRelationships(
   const assignments: Array<{ proposal: Proposal; relationship: UpgradeRelationship }> = [];
 
   for (const relationship of mergeUpgradeRelationships(relationships)) {
+    const metaMatches = proposals.filter(
+      (proposal) => proposal.k === 'eip' && proposal.n === relationship.meta,
+    );
+    if (metaMatches.length === 0) {
+      errors.push(
+        `${relationship.source}: Meta EIP-${relationship.meta} for ${relationship.name} is missing`,
+      );
+    } else if (metaMatches.length > 1) {
+      errors.push(
+        `${relationship.source}: Meta EIP-${relationship.meta} for ${relationship.name} is ambiguous`,
+      );
+    } else if (metaMatches[0]!.ty !== 'Meta' || metaMatches[0]!.pr !== undefined) {
+      errors.push(
+        `${relationship.source}: Meta EIP-${relationship.meta} for ${relationship.name} must be a merged Meta EIP`,
+      );
+    }
+
     // Upgrade sources describe EIPs. ERCs never inherit membership through
     // `requires`, even when an ERC and EIP happen to share a number.
     const matches = proposals.filter(
@@ -1125,7 +1166,7 @@ export function attachUpgradeRelationships(
           a.order - b.order ||
           a.name.localeCompare(b.name),
       )
-      .map(({ name: n, status: s }) => ({ n, s }));
+      .map(({ name: n, status: s, meta: m }) => ({ n, s, m }));
   }
   return errors;
 }

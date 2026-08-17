@@ -31,7 +31,19 @@ const relationship = (
   status: 'included' | 'scheduled',
   order: number,
   source = status === 'included' ? 'EELS' : 'Forkcast fixture.json',
-): UpgradeRelationship => ({ proposal, name, status, order, source });
+  meta =
+    new Map([
+      ['Constantinople', 1013],
+      ['Petersburg', 1716],
+      ['Dencun', 7569],
+      ['Pectra', 7600],
+      ['Fusaka', 7607],
+      ['Glamsterdam', 7773],
+      ['Hegotá', 8081],
+      ['BPO1', 8134],
+      ['BPO2', 8135],
+    ]).get(name) ?? 9000,
+): UpgradeRelationship => ({ proposal, name, status, meta, order, source });
 
 const proposal = (n: number, overrides: Partial<Proposal> = {}): Proposal => ({
   n,
@@ -46,6 +58,8 @@ const proposal = (n: number, overrides: Partial<Proposal> = {}): Proposal => ({
   req: [],
   ...overrides,
 });
+
+const metaProposal = (n: number): Proposal => proposal(n, { ty: 'Meta', c: '' });
 
 describe('upgrade names and EELS protocol history', () => {
   it('normalizes layer fork names to common upgrade names', () => {
@@ -68,22 +82,22 @@ describe('upgrade names and EELS protocol history', () => {
   it('parses only the activated mainnet table and retains repeated EIPs across forks', () => {
     const parsed = parseEelsProtocolHistory(
       eelsHistory([
-        '| Osaka | 23 | 2025-12-03 | [EIP-7892] <br> [EIP-7918] | spec | blog |',
-        '| Prague | 22 | 2025-05-07 | [EIP-7702] | spec | blog |',
-        '| Cancun | 19 | 2024-03-13<br />(1710338135) | [EIP-4844](example) | spec | blog |',
-        '| Petersburg | 7 | 2019-02-28 | [EIP-145](example) | spec | blog |',
-        '| Constantinople | 7 | 2019-02-28 | [EIP-145](example) | spec | blog |',
+        '| Osaka | 23 | 2025-12-03 | [EIP-7892] <br> [EIP-7918] | [Hardfork Meta EIP-7607](https://eips.ethereum.org/EIPS/eip-7607) | blog |',
+        '| Prague | 22 | 2025-05-07 | [EIP-7702] | [Hardfork Meta EIP-7600](https://eips.ethereum.org/EIPS/eip-7600) | blog |',
+        '| Cancun | 19 | 2024-03-13<br />(1710338135) | [EIP-4844](example) | [Hardfork Meta EIP-7569](https://eips.ethereum.org/EIPS/eip-7569) | blog |',
+        '| Petersburg | 7 | 2019-02-28 | [EIP-145](example) | [Hardfork Meta EIP-1716](https://eips.ethereum.org/EIPS/eip-1716) | blog |',
+        '| Constantinople | 7 | 2019-02-28 | [EIP-145](example) | [Hardfork Meta EIP-1013](https://eips.ethereum.org/EIPS/eip-1013) | blog |',
         '| Frontier | 1 | 2015-07-30 | | spec | blog |',
       ]),
     );
 
-    expect(parsed.map(({ proposal, name, status }) => ({ proposal, name, status }))).toEqual([
-      { proposal: 7892, name: 'Fusaka', status: 'included' },
-      { proposal: 7918, name: 'Fusaka', status: 'included' },
-      { proposal: 7702, name: 'Pectra', status: 'included' },
-      { proposal: 4844, name: 'Dencun', status: 'included' },
-      { proposal: 145, name: 'Petersburg', status: 'included' },
-      { proposal: 145, name: 'Constantinople', status: 'included' },
+    expect(parsed.map(({ proposal, name, status, meta }) => ({ proposal, name, status, meta }))).toEqual([
+      { proposal: 7892, name: 'Fusaka', status: 'included', meta: 7607 },
+      { proposal: 7918, name: 'Fusaka', status: 'included', meta: 7607 },
+      { proposal: 7702, name: 'Pectra', status: 'included', meta: 7600 },
+      { proposal: 4844, name: 'Dencun', status: 'included', meta: 7569 },
+      { proposal: 145, name: 'Petersburg', status: 'included', meta: 1716 },
+      { proposal: 145, name: 'Constantinople', status: 'included', meta: 1013 },
     ]);
     expect(parsed.some((item) => item.proposal === 9999)).toBe(false);
   });
@@ -93,20 +107,41 @@ describe('upgrade names and EELS protocol history', () => {
     expect(() =>
       parseEelsProtocolHistory(
         eelsHistory([
-          '| London | 12 | 2021-08-05 | [EIP-1559] <br> [EIP-1559] | spec | blog |',
+          '| London | 12 | 2021-08-05 | [EIP-1559] <br> [EIP-1559] | [Hardfork Meta EIP-7568](https://eips.ethereum.org/EIPS/eip-7568) | blog |',
         ]),
       ),
     ).toThrow('duplicate relationship');
     expect(() =>
       parseEelsProtocolHistory(
-        eelsHistory(['| London | 12 | 2021-08-05 | [EIP-1559] <br> EIP-TBD | spec | blog |']),
+        eelsHistory(['| London | 12 | 2021-08-05 | [EIP-1559] <br> EIP-TBD | [Hardfork Meta EIP-7568](https://eips.ethereum.org/EIPS/eip-7568) | blog |']),
       ),
     ).toThrow('invalid included EIP-TBD');
     expect(() =>
       parseEelsProtocolHistory(
-        eelsHistory(['| London | 12 | 2021-08-05 | [EIP-0] | spec | blog |']),
+        eelsHistory(['| London | 12 | 2021-08-05 | [EIP-0] | [Hardfork Meta EIP-7568](https://eips.ethereum.org/EIPS/eip-7568) | blog |']),
       ),
     ).toThrow('invalid included EIP-0');
+  });
+
+  it('uses the one active Meta EIP link and rejects missing or mismatched links', () => {
+    const berlin = parseEelsProtocolHistory(
+      eelsHistory([
+        '| Berlin | 12 | 2021-04-15 | [EIP-2929] | ~[Hardfork Meta EIP-2070](https://eips.ethereum.org/EIPS/eip-2070)~ <br> [(Backfill) Meta EIP-7568](https://eips.ethereum.org/EIPS/eip-7568) | blog |',
+      ]),
+    );
+    expect(berlin[0]?.meta).toBe(7568);
+    expect(() =>
+      parseEelsProtocolHistory(
+        eelsHistory(['| London | 12 | 2021-08-05 | [EIP-1559] | spec | blog |']),
+      ),
+    ).toThrow('exactly one active hardfork Meta EIP');
+    expect(() =>
+      parseEelsProtocolHistory(
+        eelsHistory([
+          '| London | 12 | 2021-08-05 | [EIP-1559] | [Hardfork Meta EIP-7568](https://eips.ethereum.org/EIPS/eip-7569) | blog |',
+        ]),
+      ),
+    ).toThrow('invalid hardfork Meta EIP');
   });
 });
 
@@ -130,7 +165,7 @@ describe('Forkcast scheduled relationships', () => {
     );
 
     expect(parsed).toMatchObject([
-      { proposal: 7708, name: 'Glamsterdam', status: 'scheduled' },
+      { proposal: 7708, name: 'Glamsterdam', status: 'scheduled', meta: 7773 },
     ]);
   });
 
@@ -162,7 +197,7 @@ describe('Forkcast scheduled relationships', () => {
         forkcast([{ forkName: 'Futurefork', statusHistory: [{ status: 'Scheduled' }] }]),
         '7708.json',
       ),
-    ).toThrow('no chronological order is known');
+    ).toThrow('no metadata is known');
   });
 });
 
@@ -255,7 +290,7 @@ requires: ${requires}
     )!;
 
     expect(bpoRelationships([complete, incomplete], merged)).toEqual([
-      expect.objectContaining({ proposal: 7892, name: 'BPO2', status: 'included' }),
+      expect.objectContaining({ proposal: 7892, name: 'BPO2', status: 'included', meta: 8135 }),
     ]);
   });
 });
@@ -284,7 +319,7 @@ describe('upgrade relationship validation and attachment', () => {
     const erc = proposal(7892, { k: 'erc' });
     expect(
       attachUpgradeRelationships(
-        [eip, erc],
+        [eip, erc, metaProposal(7607), metaProposal(8134), metaProposal(8135), metaProposal(7773)],
         [
           relationship(7892, 'BPO2', 'included', 30, 'BPO Meta EIP-8135'),
           relationship(7892, 'Fusaka', 'included', 10),
@@ -294,10 +329,10 @@ describe('upgrade relationship validation and attachment', () => {
       ),
     ).toEqual([]);
     expect(eip.u).toEqual([
-      { n: 'Fusaka', s: 'included' },
-      { n: 'BPO1', s: 'included' },
-      { n: 'BPO2', s: 'included' },
-      { n: 'Glamsterdam', s: 'scheduled' },
+      { n: 'Fusaka', s: 'included', m: 7607 },
+      { n: 'BPO1', s: 'included', m: 8134 },
+      { n: 'BPO2', s: 'included', m: 8135 },
+      { n: 'Glamsterdam', s: 'scheduled', m: 7773 },
     ]);
     expect(erc.u).toBeUndefined();
   });
@@ -307,11 +342,11 @@ describe('upgrade relationship validation and attachment', () => {
     const aliased = proposal(8363, { aka: [8361] });
     expect(
       attachUpgradeRelationships(
-        [canonical, aliased],
+        [canonical, aliased, metaProposal(7773)],
         [relationship(8361, 'Glamsterdam', 'scheduled', 1)],
       ),
     ).toEqual([]);
-    expect(canonical.u).toEqual([{ n: 'Glamsterdam', s: 'scheduled' }]);
+    expect(canonical.u).toEqual([{ n: 'Glamsterdam', s: 'scheduled', m: 7773 }]);
     expect(aliased.u).toBeUndefined();
   });
 
@@ -319,7 +354,7 @@ describe('upgrade relationship validation and attachment', () => {
     const first = proposal(7708);
     const rival = proposal(7708, { pr: 123 });
     const errors = attachUpgradeRelationships(
-      [first, rival],
+      [first, rival, metaProposal(7773), metaProposal(8081)],
       [
         relationship(7708, 'Glamsterdam', 'scheduled', 1),
         relationship(9999, 'Hegotá', 'scheduled', 2),
@@ -329,5 +364,22 @@ describe('upgrade relationship validation and attachment', () => {
     expect(errors.join('\n')).toContain('ambiguous');
     expect(errors.join('\n')).toContain('missing');
     expect(first.u).toBeUndefined();
+  });
+
+  it('requires every upgrade link target to be a unique merged Meta EIP', () => {
+    for (const invalidMeta of [
+      [] as Proposal[],
+      [proposal(7773)],
+      [metaProposal(7773), proposal(7773, { ty: 'Meta', c: '', pr: 123 })],
+      [proposal(7773, { ty: 'Meta', c: '', pr: 123 })],
+    ]) {
+      const eip = proposal(7708);
+      const errors = attachUpgradeRelationships(
+        [eip, ...invalidMeta],
+        [relationship(7708, 'Glamsterdam', 'scheduled', 1)],
+      );
+      expect(errors).toHaveLength(1);
+      expect(eip.u).toBeUndefined();
+    }
   });
 });

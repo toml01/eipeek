@@ -414,6 +414,29 @@ try {
     const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
     return collect(root).join(' | ');
   };
+  const attributesOf = (node) =>
+    Object.fromEntries(
+      Array.from({ length: (node.attributes ?? []).length / 2 }, (_, i) => [
+        node.attributes[i * 2],
+        node.attributes[i * 2 + 1],
+      ]),
+    );
+  const findTooltipTestNodes = async (testid) => {
+    const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
+    const found = [];
+    const visit = (node) => {
+      const attrs = attributesOf(node);
+      if (attrs['data-testid'] === testid) {
+        found.push({ ...attrs, text: collect(node, [], true).join(' ') });
+      }
+      for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])]) {
+        visit(child);
+      }
+    };
+    visit(root);
+    return found;
+  };
+  const findTooltipTestNode = async (testid) => (await findTooltipTestNodes(testid))[0] ?? null;
   /** True when the extension's tooltip host is actually displayed. */
   const tooltipVisible = () =>
     page.evaluate(() =>
@@ -482,24 +505,23 @@ try {
   check('tooltip shows the title', shadowText.includes('Set Code for EOAs'));
   check('tooltip shows status and category', shadowText.includes('Final') && shadowText.includes('Core'));
   check(
-    'tooltip shows an included upgrade',
-    shadowText.includes('Upgrade:') && shadowText.includes('Pectra'),
+    'tooltip shows an included upgrade inline in the header',
+    shadowText.includes('Pectra') &&
+      !shadowText.includes('Upgrade:') &&
+      shadowText.indexOf('Pectra') < shadowText.indexOf('Set Code for EOAs'),
+  );
+  const pectraUpgradeLink = await findTooltipTestNode('tooltip-upgrade-link');
+  check(
+    'included upgrade links safely to its Meta EIP',
+    pectraUpgradeLink?.text === 'Pectra' &&
+      pectraUpgradeLink.href === 'https://eips.ethereum.org/EIPS/eip-7600' &&
+      pectraUpgradeLink.target === '_blank' &&
+      pectraUpgradeLink.rel?.includes('noopener') &&
+      pectraUpgradeLink.rel?.includes('noreferrer'),
+    JSON.stringify(pectraUpgradeLink),
   );
   check('tooltip shows links', ['Spec', 'Discussion', 'Source', 'Mistake?'].every((l) => shadowText.includes(l)));
-  const tooltipFeedbackLink = await cdp.send('DOM.getDocument', { depth: -1, pierce: true }).then(({ root }) => {
-    const find = (node) => {
-      const attrs = Object.fromEntries(
-        Array.from({ length: (node.attributes ?? []).length / 2 }, (_, i) => [node.attributes[i * 2], node.attributes[i * 2 + 1]]),
-      );
-      if (attrs['data-testid'] === 'tooltip-feedback-link') return attrs;
-      for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])]) {
-        const found = find(child);
-        if (found) return found;
-      }
-      return null;
-    };
-    return find(root);
-  });
+  const tooltipFeedbackLink = await findTooltipTestNode('tooltip-feedback-link');
   check(
     'tooltip mistake link targets the feedback issue draft safely',
     tooltipFeedbackLink?.href === feedbackIssueUrl &&
@@ -513,9 +535,35 @@ try {
   const scheduledUpgradeText = await waitForTooltip('ETH transfers emit a log');
   console.log(`      tooltip: ${summarize(scheduledUpgradeText)}`);
   check(
-    'tooltip shows a scheduled upgrade',
-    scheduledUpgradeText.includes('Upgrade:') &&
-      scheduledUpgradeText.includes('Glamsterdam (scheduled)'),
+    'tooltip shows a scheduled upgrade inline in the header',
+    scheduledUpgradeText.includes('Glamsterdam') &&
+      !scheduledUpgradeText.includes('Upgrade:') &&
+      scheduledUpgradeText.indexOf('Glamsterdam') <
+        scheduledUpgradeText.indexOf('ETH transfers emit a log'),
+  );
+  const scheduledUpgradeLink = await findTooltipTestNode('tooltip-upgrade-link');
+  check(
+    'scheduled upgrade is linked, italicized, and accessibly labelled',
+    scheduledUpgradeLink?.text === 'Glamsterdam' &&
+      scheduledUpgradeLink.href === 'https://eips.ethereum.org/EIPS/eip-7773' &&
+      scheduledUpgradeLink.class?.split(' ').includes('scheduled') &&
+      scheduledUpgradeLink['aria-label'] === 'Glamsterdam (scheduled)' &&
+      scheduledUpgradeLink.title === 'Glamsterdam (scheduled)',
+    JSON.stringify(scheduledUpgradeLink),
+  );
+
+  await hoverIn('#multiple-upgrades');
+  const multipleUpgradeText = await waitForTooltip('Blob Parameter Only Hardforks');
+  const multipleUpgradeLinks = await findTooltipTestNodes('tooltip-upgrade-link');
+  const multipleUpgradeIcons = await findTooltipTestNodes('tooltip-upgrade-icon');
+  check(
+    'multiple upgrades share one icon and retain chronological link order',
+    multipleUpgradeText.indexOf('Fusaka') < multipleUpgradeText.indexOf('BPO1') &&
+      multipleUpgradeText.indexOf('BPO1') < multipleUpgradeText.indexOf('BPO2') &&
+      multipleUpgradeText.includes('Fusaka | , | BPO1 | , | BPO2') &&
+      multipleUpgradeLinks.map(({ text }) => text).join(', ') === 'Fusaka, BPO1, BPO2' &&
+      multipleUpgradeIcons.length === 1,
+    JSON.stringify({ links: multipleUpgradeLinks, icons: multipleUpgradeIcons.length }),
   );
 
   // --- 7. EIP/ERC mix-up note ------------------------------------------

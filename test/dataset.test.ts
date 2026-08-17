@@ -264,21 +264,21 @@ describe('aliases', () => {
 
 describe('spot checks', () => {
   it('ships authoritative included and scheduled mainnet upgrade membership', () => {
-    expect(resolve(2)[0]!.u).toEqual([{ n: 'Homestead', s: 'included' }]);
+    expect(resolve(2)[0]!.u).toEqual([{ n: 'Homestead', s: 'included', m: 606 }]);
     expect(resolve(145)[0]!.u).toEqual([
-      { n: 'Constantinople', s: 'included' },
-      { n: 'Petersburg', s: 'included' },
+      { n: 'Constantinople', s: 'included', m: 1013 },
+      { n: 'Petersburg', s: 'included', m: 1716 },
     ]);
-    expect(resolve(1559)[0]!.u).toEqual([{ n: 'London', s: 'included' }]);
-    expect(resolve(4844)[0]!.u).toEqual([{ n: 'Dencun', s: 'included' }]);
-    expect(resolve(7702)[0]!.u).toEqual([{ n: 'Pectra', s: 'included' }]);
+    expect(resolve(1559)[0]!.u).toEqual([{ n: 'London', s: 'included', m: 7568 }]);
+    expect(resolve(4844)[0]!.u).toEqual([{ n: 'Dencun', s: 'included', m: 7569 }]);
+    expect(resolve(7702)[0]!.u).toEqual([{ n: 'Pectra', s: 'included', m: 7600 }]);
     expect(resolve(7892)[0]!.u).toEqual([
-      { n: 'Fusaka', s: 'included' },
-      { n: 'BPO1', s: 'included' },
-      { n: 'BPO2', s: 'included' },
+      { n: 'Fusaka', s: 'included', m: 7607 },
+      { n: 'BPO1', s: 'included', m: 8134 },
+      { n: 'BPO2', s: 'included', m: 8135 },
     ]);
-    expect(resolve(7708)[0]!.u).toEqual([{ n: 'Glamsterdam', s: 'scheduled' }]);
-    expect(resolve(7805)[0]!.u).toEqual([{ n: 'Hegotá', s: 'scheduled' }]);
+    expect(resolve(7708)[0]!.u).toEqual([{ n: 'Glamsterdam', s: 'scheduled', m: 7773 }]);
+    expect(resolve(7805)[0]!.u).toEqual([{ n: 'Hegotá', s: 'scheduled', m: 8081 }]);
     expect(resolve(4337)[0]!.u).toBeUndefined();
   });
 

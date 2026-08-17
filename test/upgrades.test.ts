@@ -1,29 +1,44 @@
 import { describe, expect, it } from 'vitest';
-import { formatUpgradeRow } from '../src/ui/upgrades';
+import { formatUpgradeItems } from '../src/ui/upgrades';
 
-describe('upgrade tooltip row', () => {
+describe('inline tooltip upgrades', () => {
   it('is absent when the proposal has no upgrade membership', () => {
-    expect(formatUpgradeRow(undefined)).toBeNull();
+    expect(formatUpgradeItems(undefined)).toEqual([]);
   });
 
-  it('formats one included upgrade', () => {
-    expect(formatUpgradeRow([{ n: 'Pectra', s: 'included' }])).toEqual({
-      label: 'Upgrade:',
-      value: 'Pectra',
-    });
+  it('links an upgrade through its Meta EIP', () => {
+    expect(formatUpgradeItems([{ n: 'Pectra', s: 'included', m: 7600 }])).toEqual([
+      {
+        name: 'Pectra',
+        status: 'included',
+        url: 'https://eips.ethereum.org/EIPS/eip-7600',
+      },
+    ]);
   });
 
-  it('marks scheduled upgrades and preserves the supplied order', () => {
+  it('preserves status and supplied order', () => {
     expect(
-      formatUpgradeRow([
-        { n: 'Fusaka', s: 'included' },
-        { n: 'BPO1', s: 'included' },
-        { n: 'BPO2', s: 'included' },
-        { n: 'Glamsterdam', s: 'scheduled' },
+      formatUpgradeItems([
+        { n: 'Fusaka', s: 'included', m: 7607 },
+        { n: 'BPO1', s: 'included', m: 8134 },
+        { n: 'Glamsterdam', s: 'scheduled', m: 7773 },
       ]),
-    ).toEqual({
-      label: 'Upgrades:',
-      value: 'Fusaka, BPO1, BPO2, Glamsterdam (scheduled)',
-    });
+    ).toEqual([
+      {
+        name: 'Fusaka',
+        status: 'included',
+        url: 'https://eips.ethereum.org/EIPS/eip-7607',
+      },
+      {
+        name: 'BPO1',
+        status: 'included',
+        url: 'https://eips.ethereum.org/EIPS/eip-8134',
+      },
+      {
+        name: 'Glamsterdam',
+        status: 'scheduled',
+        url: 'https://eips.ethereum.org/EIPS/eip-7773',
+      },
+    ]);
   });
 });

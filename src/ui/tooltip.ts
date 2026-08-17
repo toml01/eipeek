@@ -3,7 +3,7 @@ import { FEEDBACK_ISSUE_URL } from '../core/feedback';
 import { aliasNumbers, linksFor, statusLine } from '../core/links';
 import { canonicalLabel, isKindMismatch } from '../core/match';
 import { isUnmerged, type Match, type Proposal } from '../core/types';
-import { formatUpgradeRow } from './upgrades';
+import { formatUpgradeItems, type UpgradeItem } from './upgrades';
 
 const MARGIN = 8;
 const MAX_WIDTH = 360;
@@ -95,6 +95,8 @@ export class Tooltip {
       el('span', `dot ${statusTone(p.s)}`),
       el('span', 'status', statusLine(p)),
     ]);
+    const upgrades = formatUpgradeItems(p.u);
+    if (upgrades.length) head.append(renderUpgradeGroup(upgrades));
     if (isUnmerged(p)) head.append(el('span', 'badge', 'UNMERGED'));
     if (isKindMismatch(match, p.k)) {
       head.append(el('span', 'note', `Referenced as ${match.writtenKind?.toUpperCase()}-${match.n}`));
@@ -118,15 +120,6 @@ export class Tooltip {
 
     // Present for ~74% of proposals.
     if (p.d) body.append(el('div', 'desc', p.d));
-    const upgrade = formatUpgradeRow(p.u);
-    if (upgrade) {
-      body.append(
-        el('div', 'upgrade-row', [
-          el('span', 'upgrade-label', upgrade.label),
-          el('span', 'upgrade-values', upgrade.value),
-        ]),
-      );
-    }
     entry.append(body);
 
     const links = el('div', 'links');
@@ -269,6 +262,72 @@ function el(tag: string, cls: string, content?: string | Node[]): HTMLElement {
   return node;
 }
 
+/** One compact, non-breaking upgrade cluster for the header metadata line. */
+function renderUpgradeGroup(upgrades: UpgradeItem[]): HTMLElement {
+  const group = el('span', 'upgrades');
+  const separator = el('span', 'upgrade-separator', '·');
+  separator.setAttribute('aria-hidden', 'true');
+  group.append(separator, forkIcon());
+
+  upgrades.forEach((upgrade, index) => {
+    if (index > 0) group.append(document.createTextNode(', '));
+
+    const name = document.createElement('a');
+    name.className = 'upgrade-name';
+    name.href = upgrade.url;
+    name.target = '_blank';
+    name.rel = 'noopener noreferrer';
+    name.dataset.testid = 'tooltip-upgrade-link';
+    if (upgrade.status === 'scheduled') {
+      const scheduledLabel = `${upgrade.name} (scheduled)`;
+      name.classList.add('scheduled');
+      name.setAttribute('aria-label', scheduledLabel);
+      name.title = scheduledLabel;
+    }
+    name.textContent = upgrade.name;
+    group.append(name);
+  });
+
+  return group;
+}
+
+/** Lucide GitFork, ISC licensed: https://lucide.dev/icons/git-fork */
+function forkIcon(): SVGSVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.classList.add('upgrade-icon');
+  svg.setAttribute('data-testid', 'tooltip-upgrade-icon');
+  svg.setAttribute('width', '12');
+  svg.setAttribute('height', '12');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+
+  for (const [cx, cy] of [
+    ['12', '18'],
+    ['6', '6'],
+    ['18', '6'],
+  ] as const) {
+    const circle = document.createElementNS(ns, 'circle');
+    circle.setAttribute('cx', cx);
+    circle.setAttribute('cy', cy);
+    circle.setAttribute('r', '3');
+    svg.append(circle);
+  }
+  for (const d of ['M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9', 'M12 12v3']) {
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+  }
+
+  return svg;
+}
+
 /**
  * Status dot colour. Groups the seven statuses the dataset actually carries into
  * settled / in-flight / abandoned; anything unrecognised reads as abandoned
@@ -322,6 +381,23 @@ const CSS_TEXT = `
   .dot.wip { background: #8a6d00; }
   .dot.cold { background: #6b6b76; }
   .status { font-size: 11px; color: #6b6b76; }
+  .upgrades {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    color: #6b6b76;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .upgrade-separator, .upgrade-icon { flex: none; margin-right: 4px; }
+  .upgrade-name { color: inherit; text-decoration: none; }
+  .upgrade-name.scheduled { font-style: italic; }
+  a.upgrade-name:hover { color: #4f46e5; text-decoration: underline; }
+  a.upgrade-name:focus-visible {
+    outline: 2px solid #4f46e5;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
   .badge, .note { margin-left: auto; }
   .badge + .note { margin-left: 0; }
   .badge {
@@ -350,9 +426,6 @@ const CSS_TEXT = `
   }
   .prov { margin-top: 5px; font-size: 11.5px; color: #6b6b76; }
   .desc { margin-top: 5px; color: #55555f; font-size: 12px; text-wrap: pretty; }
-  .upgrade-row { display: flex; gap: 5px; margin-top: 7px; font-size: 11.5px; }
-  .upgrade-label { flex: none; color: #6b6b76; font-weight: 500; }
-  .upgrade-values { color: #3f3f47; }
   .links {
     display: flex;
     gap: 14px;
@@ -394,10 +467,12 @@ const CSS_TEXT = `
     .dot.ok { background: #4ade80; }
     .dot.wip { background: #f0cf6a; }
     .dot.cold { background: #9a9aa2; }
-    .status, .also, .prov, .upgrade-label { color: #9a9aa2; }
+    .status, .also, .prov, .upgrades { color: #9a9aa2; }
     .badge { background: #4a3c10; color: #f0cf6a; }
     .note { color: #f0cf6a; }
-    .desc, .upgrade-values { color: #b8b8c0; }
+    .desc { color: #b8b8c0; }
+    a.upgrade-name:hover { color: #b7b0ff; }
+    a.upgrade-name:focus-visible { outline-color: #b7b0ff; }
     .links { background: #26272b; border-top-color: rgb(255 255 255 / 0.08); }
     .links a { color: #9b91ff; }
     .links .feedback-link { color: #a7a7b0; }

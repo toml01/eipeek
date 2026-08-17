@@ -1,18 +1,17 @@
+import { specUrl } from '../core/links';
 import type { Proposal } from '../core/types';
 
-export interface UpgradeRow {
-  label: 'Upgrade:' | 'Upgrades:';
-  value: string;
+export interface UpgradeItem {
+  name: string;
+  status: 'included' | 'scheduled';
+  url: string;
 }
 
-/** Formats upgrade membership for the tooltip without changing dataset order. */
-export function formatUpgradeRow(upgrades: Proposal['u']): UpgradeRow | null {
-  if (!upgrades?.length) return null;
-
-  return {
-    label: upgrades.length === 1 ? 'Upgrade:' : 'Upgrades:',
-    value: upgrades
-      .map(({ n, s }) => (s === 'scheduled' ? `${n} (scheduled)` : n))
-      .join(', '),
-  };
+/** Prepares inline upgrade metadata without changing dataset order. */
+export function formatUpgradeItems(upgrades: Proposal['u']): UpgradeItem[] {
+  return (upgrades ?? []).map(({ n, s, m }) => ({
+    name: n,
+    status: s,
+    url: specUrl(m),
+  }));
 }
