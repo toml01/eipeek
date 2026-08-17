@@ -263,6 +263,25 @@ describe('aliases', () => {
 });
 
 describe('spot checks', () => {
+  it('ships authoritative included and scheduled mainnet upgrade membership', () => {
+    expect(resolve(2)[0]!.u).toEqual([{ n: 'Homestead', s: 'included' }]);
+    expect(resolve(145)[0]!.u).toEqual([
+      { n: 'Constantinople', s: 'included' },
+      { n: 'Petersburg', s: 'included' },
+    ]);
+    expect(resolve(1559)[0]!.u).toEqual([{ n: 'London', s: 'included' }]);
+    expect(resolve(4844)[0]!.u).toEqual([{ n: 'Dencun', s: 'included' }]);
+    expect(resolve(7702)[0]!.u).toEqual([{ n: 'Pectra', s: 'included' }]);
+    expect(resolve(7892)[0]!.u).toEqual([
+      { n: 'Fusaka', s: 'included' },
+      { n: 'BPO1', s: 'included' },
+      { n: 'BPO2', s: 'included' },
+    ]);
+    expect(resolve(7708)[0]!.u).toEqual([{ n: 'Glamsterdam', s: 'scheduled' }]);
+    expect(resolve(7805)[0]!.u).toEqual([{ n: 'Hegotá', s: 'scheduled' }]);
+    expect(resolve(4337)[0]!.u).toBeUndefined();
+  });
+
   it('resolves EIP-7702 as merged', () => {
     const p = resolve(7702)[0]!;
     expect(p.t).toBe('Set Code for EOAs');

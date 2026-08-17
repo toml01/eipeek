@@ -10,6 +10,8 @@ export interface Proposal {
   disc: string;
   cr: string;
   req: number[];
+  /** Mainnet upgrades that introduced or have scheduled this protocol change. */
+  u?: Array<{ n: string; s: 'included' | 'scheduled' }>;
 
   // -- present only on proposals that live in an open pull request ----------
   /** PR number; its absence is what marks a proposal as merged. */

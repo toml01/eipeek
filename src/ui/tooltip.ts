@@ -3,6 +3,7 @@ import { FEEDBACK_ISSUE_URL } from '../core/feedback';
 import { aliasNumbers, linksFor, statusLine } from '../core/links';
 import { canonicalLabel, isKindMismatch } from '../core/match';
 import { isUnmerged, type Match, type Proposal } from '../core/types';
+import { formatUpgradeRow } from './upgrades';
 
 const MARGIN = 8;
 const MAX_WIDTH = 360;
@@ -117,6 +118,15 @@ export class Tooltip {
 
     // Present for ~74% of proposals.
     if (p.d) body.append(el('div', 'desc', p.d));
+    const upgrade = formatUpgradeRow(p.u);
+    if (upgrade) {
+      body.append(
+        el('div', 'upgrade-row', [
+          el('span', 'upgrade-label', upgrade.label),
+          el('span', 'upgrade-values', upgrade.value),
+        ]),
+      );
+    }
     entry.append(body);
 
     const links = el('div', 'links');
@@ -340,6 +350,9 @@ const CSS_TEXT = `
   }
   .prov { margin-top: 5px; font-size: 11.5px; color: #6b6b76; }
   .desc { margin-top: 5px; color: #55555f; font-size: 12px; text-wrap: pretty; }
+  .upgrade-row { display: flex; gap: 5px; margin-top: 7px; font-size: 11.5px; }
+  .upgrade-label { flex: none; color: #6b6b76; font-weight: 500; }
+  .upgrade-values { color: #3f3f47; }
   .links {
     display: flex;
     gap: 14px;
@@ -381,10 +394,10 @@ const CSS_TEXT = `
     .dot.ok { background: #4ade80; }
     .dot.wip { background: #f0cf6a; }
     .dot.cold { background: #9a9aa2; }
-    .status, .also, .prov { color: #9a9aa2; }
+    .status, .also, .prov, .upgrade-label { color: #9a9aa2; }
     .badge { background: #4a3c10; color: #f0cf6a; }
     .note { color: #f0cf6a; }
-    .desc { color: #b8b8c0; }
+    .desc, .upgrade-values { color: #b8b8c0; }
     .links { background: #26272b; border-top-color: rgb(255 255 255 / 0.08); }
     .links a { color: #9b91ff; }
     .links .feedback-link { color: #a7a7b0; }

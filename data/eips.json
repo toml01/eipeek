@@ -21,7 +21,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2015-11-15",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Homestead",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 3,
@@ -81,7 +87,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2015-11-15",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Homestead",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 8,
@@ -93,7 +105,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2015-12-18",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Homestead",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 20,
@@ -153,7 +171,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2016-04-28",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Byzantium",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 101,
@@ -201,7 +225,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2017-02-06",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Byzantium",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 141,
@@ -225,7 +255,17 @@
     "k": "eip",
     "disc": "",
     "cr": "2017-02-13",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Constantinople",
+        "s": "included"
+      },
+      {
+        "n": "Petersburg",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 150,
@@ -237,7 +277,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2016-09-24",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Tangerine Whistle",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 152,
@@ -249,7 +295,13 @@
     "k": "eip",
     "disc": "https://github.com/ethereum/EIPs/issues/152",
     "cr": "2016-10-04",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Istanbul",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 155,
@@ -261,7 +313,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2016-10-14",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Spurious Dragon",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 158,
@@ -285,7 +343,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2016-10-20",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Spurious Dragon",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 161,
@@ -297,7 +361,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2016-10-24",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Spurious Dragon",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 162,
@@ -335,7 +405,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2016-11-04",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Spurious Dragon",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 173,
@@ -395,7 +471,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2017-02-02",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Byzantium",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 197,
@@ -407,7 +489,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2017-02-06",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Byzantium",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 198,
@@ -419,7 +507,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2017-01-30",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Byzantium",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 205,
@@ -458,7 +552,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2017-02-13",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Byzantium",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 214,
@@ -470,7 +570,13 @@
     "k": "eip",
     "disc": "",
     "cr": "2017-02-13",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Byzantium",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 223,
@@ -679,7 +785,13 @@
     "k": "eip",
     "disc": "https://github.com/ethereum/EIPs/issues/649",
     "cr": "2017-06-21",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Byzantium",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 658,
@@ -693,6 +805,12 @@
     "cr": "2017-06-30",
     "req": [
       140
+    ],
+    "u": [
+      {
+        "n": "Byzantium",
+        "s": "included"
+      }
     ]
   },
   {
@@ -1227,7 +1345,17 @@
     "k": "eip",
     "disc": "",
     "cr": "2018-04-20",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Constantinople",
+        "s": "included"
+      },
+      {
+        "n": "Petersburg",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 1015,
@@ -1281,6 +1409,16 @@
     "cr": "2018-05-02",
     "req": [
       161
+    ],
+    "u": [
+      {
+        "n": "Constantinople",
+        "s": "included"
+      },
+      {
+        "n": "Petersburg",
+        "s": "included"
+      }
     ]
   },
   {
@@ -1430,6 +1568,12 @@
     "req": [
       196,
       197
+    ],
+    "u": [
+      {
+        "n": "Istanbul",
+        "s": "included"
+      }
     ]
   },
   {
@@ -1493,6 +1637,12 @@
     "req": [
       2200,
       3529
+    ],
+    "u": [
+      {
+        "n": "Dencun",
+        "s": "included"
+      }
     ]
   },
   {
@@ -1681,7 +1831,17 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-1234-constantinople-difficulty-bomb-delay-and-block-reward-adjustment/833",
     "cr": "2018-07-19",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Constantinople",
+        "s": "included"
+      },
+      {
+        "n": "Petersburg",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 1240,
@@ -1744,7 +1904,13 @@
     "k": "eip",
     "disc": "https://github.com/sorpaas/EIPs/issues/1",
     "cr": "2018-08-01",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Constantinople",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 1285,
@@ -1821,6 +1987,12 @@
     "cr": "2018-08-22",
     "req": [
       155
+    ],
+    "u": [
+      {
+        "n": "Istanbul",
+        "s": "included"
+      }
     ]
   },
   {
@@ -2152,6 +2324,12 @@
     "req": [
       2718,
       2930
+    ],
+    "u": [
+      {
+        "n": "London",
+        "s": "included"
+      }
     ]
   },
   {
@@ -2543,6 +2721,12 @@
     "req": [
       150,
       1052
+    ],
+    "u": [
+      {
+        "n": "Istanbul",
+        "s": "included"
+      }
     ]
   },
   {
@@ -2678,6 +2862,23 @@
     "req": [
       721
     ]
+  },
+  {
+    "n": 1954,
+    "t": "AI Agent Security Framework for DeFi",
+    "d": "A systematic classification and mitigation framework for AI agent DeFi surfaces, defining 8 attack vectors and 3 compliance levels",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "ERC",
+    "k": "erc",
+    "disc": "https://ethereum-magicians.org/t/erc-1954-ai-agent-security-framework-for-defi/29400",
+    "cr": "2026-08-17",
+    "req": [],
+    "pr": 1954,
+    "prRepo": "ERCs",
+    "prRef": "5b07fb7b761b318b701f8bc0b5a9fc5639fa09f0",
+    "prHead": "shunfeng8421/ERCs",
+    "prOpened": "2026-08-16T20:15:31Z"
   },
   {
     "n": 1959,
@@ -2939,7 +3140,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-2028-calldata-gas-cost-reduction/3280",
     "cr": "2019-05-03",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Istanbul",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 2029,
@@ -3126,7 +3333,13 @@
     "k": "eip",
     "disc": "https://github.com/sorpaas/EIPs/issues/1",
     "cr": "2019-07-18",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Istanbul",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 2228,
@@ -3355,7 +3568,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-2384-difficulty-bomb-delay",
     "cr": "2019-11-20",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Muir Glacier",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 2386,
@@ -3592,7 +3811,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip2537-bls12-precompile-discussion-thread/4187",
     "cr": "2020-02-21",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 2539,
@@ -3647,6 +3872,12 @@
     "cr": "2020-03-20",
     "req": [
       198
+    ],
+    "u": [
+      {
+        "n": "Berlin",
+        "s": "included"
+      }
     ]
   },
   {
@@ -3875,7 +4106,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-2718-typed-transaction-envelope/4355",
     "cr": "2020-06-13",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Berlin",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 2733,
@@ -3967,6 +4204,12 @@
       7928,
       8037,
       8038
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -4082,7 +4325,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-2929-gas-cost-increases-for-state-access-opcodes/4558",
     "cr": "2020-09-01",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Berlin",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 2930,
@@ -4097,6 +4346,12 @@
     "req": [
       2718,
       2929
+    ],
+    "u": [
+      {
+        "n": "Berlin",
+        "s": "included"
+      }
     ]
   },
   {
@@ -4109,7 +4364,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-2935-save-historical-block-hashes-in-state/4565",
     "cr": "2020-09-03",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 2936,
@@ -4534,6 +4795,12 @@
     "cr": "2021-01-13",
     "req": [
       1559
+    ],
+    "u": [
+      {
+        "n": "London",
+        "s": "included"
+      }
     ]
   },
   {
@@ -4937,6 +5204,12 @@
       2200,
       2929,
       2930
+    ],
+    "u": [
+      {
+        "n": "London",
+        "s": "included"
+      }
     ]
   },
   {
@@ -4979,7 +5252,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/evm-object-format-eof/5727",
     "cr": "2021-03-16",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "London",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 3554,
@@ -4991,7 +5270,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-3554-ice-age-delay-targeting-december-2021/6188",
     "cr": "2021-05-06",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "London",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 3561,
@@ -5085,6 +5370,12 @@
     "cr": "2021-07-12",
     "req": [
       2929
+    ],
+    "u": [
+      {
+        "n": "Shapella",
+        "s": "included"
+      }
     ]
   },
   {
@@ -5125,6 +5416,12 @@
     "cr": "2021-07-22",
     "req": [
       2124
+    ],
+    "u": [
+      {
+        "n": "The Merge",
+        "s": "included"
+      }
     ]
   },
   {
@@ -5252,7 +5549,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-3855-push0-instruction/7014",
     "cr": "2021-02-19",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Shapella",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 3860,
@@ -5266,6 +5569,12 @@
     "cr": "2021-07-16",
     "req": [
       170
+    ],
+    "u": [
+      {
+        "n": "Shapella",
+        "s": "included"
+      }
     ]
   },
   {
@@ -5334,7 +5643,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-4345-difficulty-bomb-delay-to-may-2022/7209",
     "cr": "2021-10-05",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Arrow Glacier",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 4353,
@@ -5409,6 +5724,12 @@
     "cr": "2021-10-30",
     "req": [
       3675
+    ],
+    "u": [
+      {
+        "n": "The Merge",
+        "s": "included"
+      }
     ]
   },
   {
@@ -5710,6 +6031,12 @@
     "cr": "2022-02-10",
     "req": [
       1559
+    ],
+    "u": [
+      {
+        "n": "Dencun",
+        "s": "included"
+      }
     ]
   },
   {
@@ -5791,6 +6118,12 @@
       2718,
       2930,
       4895
+    ],
+    "u": [
+      {
+        "n": "Dencun",
+        "s": "included"
+      }
     ]
   },
   {
@@ -5869,7 +6202,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-4895-beacon-chain-withdrawals-as-system-level-operations/8568",
     "cr": "2022-03-10",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Shapella",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 4906,
@@ -6355,7 +6694,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-5133-delaying-difficulty-bomb-to-mid-september-2022/9622",
     "cr": "2022-06-01",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Gray Glacier",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 5139,
@@ -7279,7 +7624,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-5656-mcopy-instruction/10890",
     "cr": "2021-02-01",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Dencun",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 5679,
@@ -7799,6 +8150,12 @@
     "cr": "2022-12-09",
     "req": [
       7685
+    ],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
     ]
   },
   {
@@ -8466,6 +8823,12 @@
       2681,
       2929,
       3529
+    ],
+    "u": [
+      {
+        "n": "Dencun",
+        "s": "included"
+      }
     ]
   },
   {
@@ -8957,6 +9320,12 @@
     "cr": "2023-05-09",
     "req": [
       7685
+    ],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
     ]
   },
   {
@@ -9016,7 +9385,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7044-perpetually-valid-signed-voluntary-exits/14348",
     "cr": "2023-05-18",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Dencun",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7045,
@@ -9028,7 +9403,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7045-increase-attestation-slot-inclusion-range/14342",
     "cr": "2023-05-18",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Dencun",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7053,
@@ -9270,6 +9651,12 @@
     "req": [
       7002,
       7685
+    ],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
     ]
   },
   {
@@ -9820,7 +10207,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7514-add-max-epoch-churn-limit/15709",
     "cr": "2023-09-07",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Dencun",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7516,
@@ -9835,6 +10228,12 @@
     "req": [
       3198,
       4844
+    ],
+    "u": [
+      {
+        "n": "Dencun",
+        "s": "included"
+      }
     ]
   },
   {
@@ -10146,7 +10545,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7549-move-committee-index-outside-attestation/16390",
     "cr": "2023-11-01",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7551,
@@ -10538,6 +10943,12 @@
     "cr": "2024-01-12",
     "req": [
       4844
+    ],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
     ]
   },
   {
@@ -10711,7 +11122,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-revert-creation-in-case-of-non-empty-storage/18452",
     "cr": "2024-02-02",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
+    ]
   },
   {
     "n": 7612,
@@ -10840,7 +11257,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7623-increase-calldata-cost/18647",
     "cr": "2024-02-13",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7627,
@@ -11006,6 +11429,12 @@
     "cr": "2024-02-29",
     "req": [
       5793
+    ],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
     ]
   },
   {
@@ -11405,7 +11834,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7685-general-purpose-execution-layer-requests/19668",
     "cr": "2024-04-14",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7686,
@@ -11433,6 +11868,12 @@
       7495,
       7607,
       7916
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -11445,7 +11886,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7691-blob-throughput-increase/19694",
     "cr": "2024-04-17",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7692,
@@ -11576,6 +12023,12 @@
       3541,
       3607,
       4844
+    ],
+    "u": [
+      {
+        "n": "Pectra",
+        "s": "included"
+      }
     ]
   },
   {
@@ -11646,6 +12099,12 @@
       4788,
       6780,
       8246
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -11838,7 +12297,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7732-enshrined-proposer-builder-separation-epbs/19634",
     "cr": "2024-06-28",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
+    ]
   },
   {
     "n": 7734,
@@ -12285,7 +12750,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7778-prevent-block-gas-smuggling/21234",
     "cr": "2024-10-01",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
+    ]
   },
   {
     "n": 7779,
@@ -12603,7 +13074,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7805-committee-based-fork-choice-enforced-inclusion-lists-focil/21578",
     "cr": "2024-11-01",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Hegotá",
+        "s": "scheduled"
+      }
+    ]
   },
   {
     "n": 7806,
@@ -12773,6 +13250,12 @@
     "cr": "2024-11-11",
     "req": [
       198
+    ],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
     ]
   },
   {
@@ -12802,7 +13285,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7825-transaction-gas-limit-cap/21848",
     "cr": "2024-11-23",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7827,
@@ -12981,7 +13470,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7843-slotnum-opcode/22234",
     "cr": "2024-12-06",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
+    ]
   },
   {
     "n": 7844,
@@ -13064,23 +13559,6 @@
     "req": [
       7702
     ]
-  },
-  {
-    "n": 7855,
-    "t": "Fungible Token with gas rebates",
-    "d": "Built-in gas rebates, secure signature validation, and optimized transfer mechanisms.",
-    "s": "Draft",
-    "ty": "Standards Track",
-    "c": "ERC",
-    "k": "erc",
-    "disc": "https://ethereum-magicians.org/t/erc-7849-fungible-token-with-gas-rebates/22356",
-    "cr": "2025-01-01",
-    "req": [],
-    "pr": 822,
-    "prRepo": "ERCs",
-    "prRef": "bba479a369bf00097a6466109e016dde3e9868a1",
-    "prHead": "blockchainDevAmitesh/ERC7849",
-    "prOpened": "2025-01-01T13:40:40Z"
   },
   {
     "n": 7856,
@@ -13406,6 +13884,12 @@
     "cr": "2025-02-11",
     "req": [
       2565
+    ],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
     ]
   },
   {
@@ -13516,6 +14000,20 @@
     "cr": "2025-02-28",
     "req": [
       7840
+    ],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      },
+      {
+        "n": "BPO1",
+        "s": "included"
+      },
+      {
+        "n": "BPO2",
+        "s": "included"
+      }
     ]
   },
   {
@@ -13724,7 +14222,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eth-config-json-rpc-method/23183",
     "cr": "2025-03-18",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7911,
@@ -13815,7 +14319,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7917-deterministic-proposer-lookahead/23259",
     "cr": "2025-03-24",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7918,
@@ -13830,6 +14340,12 @@
     "req": [
       4844,
       7840
+    ],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
     ]
   },
   {
@@ -13966,7 +14482,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7928-block-level-access-lists/23337",
     "cr": "2025-03-31",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
+    ]
   },
   {
     "n": 7929,
@@ -14033,7 +14555,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7934-add-bytesize-limit-to-blocks/23589",
     "cr": "2025-04-16",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7935,
@@ -14045,7 +14573,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7935-set-default-gas-limit-to-60m/23789",
     "cr": "2025-04-22",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7936,
@@ -14093,7 +14627,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/create-a-new-opcode-for-counting-leading-zeros-clz/10805",
     "cr": "2025-04-28",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7940,
@@ -14227,7 +14767,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-7951-precompile-for-secp256r1-curve-support/24360",
     "cr": "2025-05-27",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Fusaka",
+        "s": "included"
+      }
+    ]
   },
   {
     "n": 7954,
@@ -14242,6 +14788,12 @@
     "req": [
       170,
       3860
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -14549,6 +15101,12 @@
     "cr": "2025-06-18",
     "req": [
       7623
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -14614,6 +15172,12 @@
       2930,
       7623,
       7976
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -14808,6 +15372,12 @@
     "cr": "2025-08-03",
     "req": [
       1014
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -15188,7 +15758,13 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-8024-backward-compatible-swapn-dupn-exchange/25486",
     "cr": "2025-08-16",
-    "req": []
+    "req": [],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
+    ]
   },
   {
     "n": 8025,
@@ -15384,6 +15960,12 @@
       7928,
       7976,
       8038
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -15398,6 +15980,12 @@
     "cr": "2025-10-03",
     "req": [
       8037
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -15497,6 +16085,12 @@
     "cr": "2025-10-16",
     "req": [
       7917
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -15724,6 +16318,12 @@
     "cr": "2025-10-17",
     "req": [
       7251
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -18423,7 +19023,7 @@
     ],
     "pr": 1688,
     "prRepo": "ERCs",
-    "prRef": "c8ffced8f04493f06ef237c49e5f919f8d375541",
+    "prRef": "d74f94d8019aee6c509dca4766a42e7c2310f9d7",
     "prHead": "richard-620/ERCs",
     "prOpened": "2026-04-16T04:28:13Z"
   },
@@ -18645,6 +19245,12 @@
     "req": [
       161,
       6780
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -19191,6 +19797,12 @@
       1559,
       7685,
       7732
+    ],
+    "u": [
+      {
+        "n": "Glamsterdam",
+        "s": "scheduled"
+      }
     ]
   },
   {
@@ -20686,23 +21298,6 @@
     "prOpened": "2026-08-05T07:19:47Z"
   },
   {
-    "n": 8367,
-    "t": "Balance sunset for retired BLS validators",
-    "d": "Gradually reduce balances of retired 0x00 validators to zero on a published schedule ahead of the post-quantum transition",
-    "s": "Draft",
-    "ty": "Standards Track",
-    "c": "Core",
-    "k": "eip",
-    "disc": "https://ethereum-magicians.org/t/eip-8367-balance-sunset-for-retired-bls-validators/29299",
-    "cr": "2026-07-18",
-    "req": [],
-    "pr": 12151,
-    "prRepo": "EIPs",
-    "prRef": "a6b75117beba67e37714e141de9aa49143c043dd",
-    "prHead": "minksy-ux/EIPs",
-    "prOpened": "2026-08-13T03:40:48Z"
-  },
-  {
     "n": 8368,
     "t": "CPSB Recalibration for New Gas Limit",
     "d": "Re-derives the cost per state byte (CPSB) parameter introduced in EIP-8037 for a new reference block gas limit",
@@ -20933,6 +21528,48 @@
     "aka": [
       8373
     ]
+  },
+  {
+    "n": 8380,
+    "t": "Unclonable Agent Execution Credentials",
+    "d": "Single use agent capability tokens that burn a zero-knowledge nullifier so a cloned agent cannot replay them",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "ERC",
+    "k": "erc",
+    "disc": "https://ethereum-magicians.org/t/erc-8380-unclonable-agent-execution-credentials/29274",
+    "cr": "2026-08-17",
+    "req": [
+      6900,
+      7579,
+      8004
+    ],
+    "pr": 1953,
+    "prRepo": "ERCs",
+    "prRef": "4305751193eebbe011450ac7410ca61b619509af",
+    "prHead": "mzf11125/mzf11125-ERCs",
+    "prOpened": "2026-08-16T19:32:19Z"
+  },
+  {
+    "n": 8382,
+    "t": "Private Referable NFTs",
+    "d": "An ERC-721 extension for proof-verified hidden NFT references with optional selective disclosure.",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "ERC",
+    "k": "erc",
+    "disc": "https://ethereum-magicians.org/t/erc-8382-private-referable-nfts/29442",
+    "cr": "2026-08-17",
+    "req": [
+      165,
+      721,
+      5521
+    ],
+    "pr": 1955,
+    "prRepo": "ERCs",
+    "prRef": "5965b96b92e56e28698ed4f02526e8f8ef21c3cc",
+    "prHead": "richard-620/ERCs",
+    "prOpened": "2026-08-17T07:10:29Z"
   },
   {
     "n": 9000,

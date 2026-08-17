@@ -8,7 +8,7 @@ to the spec, forum discussion, and source.
 
 > EIP-7702 → **EIP-7702** · Final · Core — Set Code for EOAs
 
-Covers **1189 merged proposals plus 205 that so far exist only in an open pull
+Covers **1194 merged proposals plus 214 that so far exist only in an open pull
 request**, across `ethereum/EIPs` and `ethereum/ERCs`, bundled with the extension.
 **No network requests are made while you browse** — the dataset is in the
 package, so the pages you read stay on your machine.
@@ -308,9 +308,9 @@ Pages with no references should cost nothing, so the data is split in two:
 | | Size | Where |
 | --- | --- | --- |
 | Number index | ~7 KB | inlined in the content script, for instant rejection |
-| Full metadata | 334 KB | background worker, fetched only after a match |
+| Full metadata | 439 KB | background worker, fetched only after a match |
 
-The content script injected into every page is **~20 KB**. Metadata travels over
+The content script injected into every page is **~29 KB**. Metadata travels over
 `runtime.sendMessage` rather than `web_accessible_resources`, so there is no
 fetchable extension URL for a page to probe for.
 
@@ -329,9 +329,9 @@ npm run data:maintain
 
 This launches a Sol agent through the local Codex CLI and the user's current
 Codex login. It runs the deterministic commands, handles transient failures,
-investigates aliases from upstream evidence, and leaves the resulting diff for
-review without committing or pushing. Run `codex login` first if the CLI is not
-already authenticated.
+investigates aliases and upgrade-source changes from upstream evidence, and
+leaves the resulting diff for review without committing or pushing. Run
+`codex login` first if the CLI is not already authenticated.
 
 Open-PR aliases expire 180 days after the PR was opened. Younger aliases are
 reviewed using upstream evidence for stagnation, obsolescence, and continued
@@ -351,7 +351,8 @@ The token is only for enumerating open pull requests: listing 756 PRs *with thei
 file lists* needs GraphQL, and GraphQL always requires auth. Everything else in
 the build is unauthenticated.
 
-The **GitHub repos are the source of truth**, not `eips.ethereum.org`:
+The **GitHub repos are the source of truth for proposal metadata**, not
+`eips.ethereum.org`:
 
 - The site is a Jekyll build *of* those repos, so it is downstream by
   construction and cannot be fresher.
@@ -370,7 +371,22 @@ Deduplication: 365 of the 366 cross-repo overlaps are `status: Moved` stubs left
 behind by the ERC split; the only real collision is EIP-1, resolved by preferring
 the EIPs copy.
 
-**The build validates itself against the published site** and fails on any
+Mainnet upgrade membership is rebuilt alongside proposal metadata on every run:
+
+- Activated relationships come from EELS' mainnet protocol-history table.
+- Formally scheduled relationships come from Forkcast, using the final entry in
+  each upgrade-specific status history and accepting only `Scheduled`.
+- BPO relationships come from BPO Meta EIPs in the downloaded EIPs archive. A
+  concrete mainnet activation is required; non-Meta protocol dependencies receive
+  the relationship, while the Meta records themselves do not inherit it.
+
+EELS wins when a scheduled relationship becomes activated. Relationships attach
+only to an exact EIP number, never to ERCs, aliases, or transitive `requires`.
+The build deliberately fails on a new scheduled fork name until its common display
+name and chronological position are reviewed and added, so a refresh cannot ship
+plausible-looking but incorrectly ordered upgrade metadata.
+
+**The build validates itself against the published site and upgrade sources** and fails on any
 disagreement — number sets must match exactly in both directions, every title
 must match, and no title may retain quote characters. That check covers the
 **merged tier only**, since open-PR proposals appear nowhere on the site; they get
@@ -381,6 +397,12 @@ statuses (one PR declares `status: New`). Site cells are selected by
 semantic class (`.eipnum`, `.title`) rather than column position, since the
 column layout varies per status section (Last Call inserts *Review ends*,
 Withdrawn inserts *Withdrawn Reason*).
+
+Upgrade ingestion likewise fails on source schema drift, unrecognized
+relationship statuses, duplicate memberships, missing or ambiguous EIP numbers,
+malformed BPO activation data, and unknown scheduled-fork chronology. The unit
+suite pins representative included, scheduled, declined, multi-upgrade, BPO, and
+ERC-negative cases.
 
 ## Development
 

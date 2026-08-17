@@ -6,6 +6,7 @@
 
 - GitHub issue feedback link.
 - Subtle “Mistake?” feedback links in proposal tooltips.
+- Activated and formally scheduled mainnet upgrade membership in proposal tooltips.
 
 ### Changed
 

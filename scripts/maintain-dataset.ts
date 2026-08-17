@@ -21,6 +21,12 @@ cold facts without speculation or persuasion. Preserve unrelated working-tree
 changes. Do not commit or push. Finish by reporting changed paths, command
 results, evidence-backed alias decisions, and any incomplete checks.
 
+Treat upgrade metadata as part of the same refresh. Review the EELS, Forkcast,
+and BPO relationship counts printed by data:build. When a newly scheduled fork
+has no known common name or chronological position, verify both from direct
+upstream sources before updating the explicit mapping; never infer membership
+from an ERC, alias, or transitive requires relationship.
+
 Your final message is appended to a local maintenance log. End with these
 concise sections, using "None." where applicable. Recommendations must cover
 any useful improvements or changes to the scripts or maintenance workflow:

@@ -44,6 +44,9 @@ describe('dataset maintenance agent launcher', () => {
     expect(DATASET_MAINTENANCE_PROMPT).toContain('npm run data:build');
     expect(DATASET_MAINTENANCE_PROMPT).toContain('npm run data:review');
     expect(DATASET_MAINTENANCE_PROMPT).toContain('direct upstream evidence');
+    expect(DATASET_MAINTENANCE_PROMPT).toContain('EELS, Forkcast');
+    expect(DATASET_MAINTENANCE_PROMPT).toContain('newly scheduled fork');
+    expect(DATASET_MAINTENANCE_PROMPT).toContain('common name or chronological position');
     expect(DATASET_MAINTENANCE_PROMPT).toContain('concise,\ncold facts');
     expect(DATASET_MAINTENANCE_PROMPT).toContain('Do not commit or push');
     expect(DATASET_MAINTENANCE_PROMPT).toContain('Summary:');

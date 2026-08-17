@@ -481,6 +481,10 @@ try {
   );
   check('tooltip shows the title', shadowText.includes('Set Code for EOAs'));
   check('tooltip shows status and category', shadowText.includes('Final') && shadowText.includes('Core'));
+  check(
+    'tooltip shows an included upgrade',
+    shadowText.includes('Upgrade:') && shadowText.includes('Pectra'),
+  );
   check('tooltip shows links', ['Spec', 'Discussion', 'Source', 'Mistake?'].every((l) => shadowText.includes(l)));
   const tooltipFeedbackLink = await cdp.send('DOM.getDocument', { depth: -1, pierce: true }).then(({ root }) => {
     const find = (node) => {
@@ -503,6 +507,15 @@ try {
       tooltipFeedbackLink.rel?.includes('noopener') &&
       tooltipFeedbackLink.rel?.includes('noreferrer'),
     JSON.stringify(tooltipFeedbackLink),
+  );
+
+  await hoverIn('#scheduled-upgrade');
+  const scheduledUpgradeText = await waitForTooltip('ETH transfers emit a log');
+  console.log(`      tooltip: ${summarize(scheduledUpgradeText)}`);
+  check(
+    'tooltip shows a scheduled upgrade',
+    scheduledUpgradeText.includes('Upgrade:') &&
+      scheduledUpgradeText.includes('Glamsterdam (scheduled)'),
   );
 
   // --- 7. EIP/ERC mix-up note ------------------------------------------

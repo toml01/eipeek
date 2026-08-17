@@ -39,6 +39,28 @@ const SOURCES = [
   { repo: 'EIPs', tarDir: 'EIPs-master', subdir: 'EIPS', kind: 'eip' as const },
 ];
 
+const EELS_PROTOCOL_HISTORY =
+  'https://raw.githubusercontent.com/ethereum/execution-specs/forks/amsterdam/docs/specs/protocol_history.md';
+const FORKCAST_TARBALL =
+  'https://codeload.github.com/ethereum/forkcast/tar.gz/refs/heads/main';
+
+export type UpgradeStatus = 'included' | 'scheduled';
+
+export interface Upgrade {
+  /** common upgrade name */ n: string;
+  /** whether the upgrade has activated or is formally scheduled */ s: UpgradeStatus;
+}
+
+/** An upstream relationship before it is attached to a compact proposal. */
+export interface UpgradeRelationship {
+  proposal: number;
+  name: string;
+  status: UpgradeStatus;
+  /** Activation chronology for included upgrades; fork chronology for scheduled ones. */
+  order: number;
+  source: string;
+}
+
 /** A single proposal, with short keys to keep the bundled JSON small. */
 export interface Proposal {
   n: number;
@@ -51,6 +73,8 @@ export interface Proposal {
   /** discussions-to URL (absent for ~5%) */ disc: string;
   /** created date */ cr: string;
   /** requires */ req: number[];
+  /** activated and formally scheduled mainnet upgrades */
+  u?: Upgrade[];
 
   // -- present only on proposals that live in an open pull request ----------
   /** PR number; its absence is what marks a proposal as merged */ pr?: number;
@@ -149,6 +173,306 @@ function str(v: unknown): string {
   return String(v).trim();
 }
 
+const UPGRADE_NAMES: Readonly<Record<string, string>> = {
+  Cancun: 'Dencun',
+  Prague: 'Pectra',
+  Osaka: 'Fusaka',
+  Shanghai: 'Shapella',
+  Paris: 'The Merge',
+  Amsterdam: 'Glamsterdam',
+  Hegota: 'Hegotá',
+};
+
+/** Converts execution/consensus layer fork names to their common upgrade names. */
+export function normalizeUpgradeName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error('upgrade name is empty');
+  return UPGRADE_NAMES[trimmed] ?? trimmed;
+}
+
+function splitMarkdownRow(line: string): string[] {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return [];
+  return trimmed
+    .slice(1, -1)
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+/**
+ * Parses activated mainnet membership from EELS' protocol history table.
+ *
+ * It intentionally stops at the end of the mainnet table, excluding the later
+ * "Clarifications without a protocol release" section.
+ */
+export function parseEelsProtocolHistory(markdown: string): UpgradeRelationship[] {
+  const lines = markdown.split(/\r?\n/);
+  const heading = lines.findIndex((line) => line.trim() === '## Mainnet hardforks');
+  if (heading === -1) throw new Error('EELS protocol history: missing mainnet hardforks heading');
+
+  const header = lines.findIndex(
+    (line, index) =>
+      index > heading &&
+      splitMarkdownRow(line).join('|') ===
+        'Version and Code Name|Block No.|Released|Incl EIPs|Fork Specifications|Blog',
+  );
+  if (header === -1) throw new Error('EELS protocol history: mainnet table header changed');
+  if (!/^\|(?:\s*:?-+:?\s*\|){6}$/.test(lines[header + 1]?.trim() ?? '')) {
+    throw new Error('EELS protocol history: malformed mainnet table separator');
+  }
+
+  const relationships: UpgradeRelationship[] = [];
+  const seenUpgrades = new Set<string>();
+  const seenRelationships = new Set<string>();
+  let rows = 0;
+
+  for (let index = header + 2; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (!line.trim().startsWith('|')) break;
+    const cells = splitMarkdownRow(line);
+    if (cells.length !== 6) {
+      throw new Error(`EELS protocol history: row ${index + 1} has ${cells.length} columns, expected 6`);
+    }
+    rows++;
+
+    const rawName = cells[0]!.replace(/<[^>]+>/g, '').trim();
+    if (!rawName) throw new Error(`EELS protocol history: row ${index + 1} has no upgrade name`);
+    const name = normalizeUpgradeName(rawName);
+    if (seenUpgrades.has(name)) {
+      throw new Error(`EELS protocol history: duplicate upgrade ${JSON.stringify(name)}`);
+    }
+    seenUpgrades.add(name);
+
+    const includedCell = cells[3]!;
+    const eipPrefixes = [...includedCell.matchAll(/EIP-/g)];
+    const proposalMatches = [...includedCell.matchAll(/\bEIP-([A-Za-z0-9]+)\b/g)];
+    if (eipPrefixes.length !== proposalMatches.length) {
+      throw new Error(`EELS protocol history: cannot parse every included EIP for ${name}`);
+    }
+    const proposals = proposalMatches.map((match) => {
+      if (!/^\d+$/.test(match[1]!)) {
+        throw new Error(`EELS protocol history: invalid included ${match[0]} for ${name}`);
+      }
+      const proposal = Number(match[1]);
+      if (!Number.isSafeInteger(proposal) || proposal <= 0) {
+        throw new Error(`EELS protocol history: invalid included ${match[0]} for ${name}`);
+      }
+      return proposal;
+    });
+    if (proposals.length === 0) continue;
+
+    const released = /\b(\d{4}-\d{2}-\d{2})\b/.exec(cells[2]!)?.[1];
+    const order = released ? Date.parse(`${released}T00:00:00Z`) : Number.NaN;
+    if (!Number.isFinite(order)) {
+      throw new Error(`EELS protocol history: ${name} has included EIPs but no release date`);
+    }
+
+    for (const proposal of proposals) {
+      const key = `${proposal}\u0000${name}`;
+      if (seenRelationships.has(key)) {
+        throw new Error(`EELS protocol history: duplicate relationship EIP-${proposal} / ${name}`);
+      }
+      seenRelationships.add(key);
+      relationships.push({ proposal, name, status: 'included', order, source: 'EELS' });
+    }
+  }
+
+  if (rows === 0 || relationships.length === 0) {
+    throw new Error('EELS protocol history: mainnet table is empty');
+  }
+  return relationships;
+}
+
+const FORKCAST_STATUSES = new Set([
+  'Proposed',
+  'Considered',
+  'Scheduled',
+  'Declined',
+  'Included',
+  'Withdrawn',
+  'Informational',
+  'Networking',
+]);
+
+// Forkcast stores relationships by combined fork name. The explicit roadmap
+// order makes chronology reviewable and ensures a new scheduled name fails the
+// build until its position is known.
+const SCHEDULED_UPGRADE_ORDER = new Map([
+  ['Dencun', 0],
+  ['Pectra', 1],
+  ['Fusaka', 2],
+  ['Glamsterdam', 3],
+  ['Hegotá', 4],
+]);
+const SCHEDULED_ORDER_BASE = 4_000_000_000_000;
+
+function record(value: unknown, at: string): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${at}: expected an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+/** Parses the formally scheduled relationships from one Forkcast EIP record. */
+export function parseForkcastEip(raw: string, filename: string): UpgradeRelationship[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Forkcast ${filename}: invalid JSON (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  const eip = record(parsed, `Forkcast ${filename}`);
+  const proposal = eip.id;
+  if (!Number.isInteger(proposal) || (proposal as number) <= 0) {
+    throw new Error(`Forkcast ${filename}: "id" must be a positive integer`);
+  }
+  if (filename !== `${proposal}.json`) {
+    throw new Error(`Forkcast ${filename}: id ${proposal} does not match filename`);
+  }
+  if (!Array.isArray(eip.forkRelationships)) {
+    throw new Error(`Forkcast ${filename}: "forkRelationships" must be an array`);
+  }
+
+  const relationships: UpgradeRelationship[] = [];
+  const seenForks = new Set<string>();
+  for (let forkIndex = 0; forkIndex < eip.forkRelationships.length; forkIndex++) {
+    const fork = record(
+      eip.forkRelationships[forkIndex],
+      `Forkcast ${filename} forkRelationships[${forkIndex}]`,
+    );
+    if (typeof fork.forkName !== 'string' || !fork.forkName.trim()) {
+      throw new Error(`Forkcast ${filename} forkRelationships[${forkIndex}]: invalid forkName`);
+    }
+    const name = normalizeUpgradeName(fork.forkName);
+    if (seenForks.has(name)) {
+      throw new Error(`Forkcast ${filename}: duplicate relationship for ${name}`);
+    }
+    seenForks.add(name);
+    if (!Array.isArray(fork.statusHistory) || fork.statusHistory.length === 0) {
+      throw new Error(`Forkcast ${filename} ${name}: statusHistory must be a non-empty array`);
+    }
+
+    for (let statusIndex = 0; statusIndex < fork.statusHistory.length; statusIndex++) {
+      const statusEntry = record(
+        fork.statusHistory[statusIndex],
+        `Forkcast ${filename} ${name} statusHistory[${statusIndex}]`,
+      );
+      if (typeof statusEntry.status !== 'string' || !FORKCAST_STATUSES.has(statusEntry.status)) {
+        throw new Error(
+          `Forkcast ${filename} ${name}: unrecognized status ${JSON.stringify(statusEntry.status)}`,
+        );
+      }
+    }
+
+    const latest = record(fork.statusHistory.at(-1), `Forkcast ${filename} ${name} latest status`);
+    if (latest.status !== 'Scheduled') continue;
+    const order = SCHEDULED_UPGRADE_ORDER.get(name);
+    if (order === undefined) {
+      throw new Error(`Forkcast ${filename}: no chronological order is known for scheduled ${name}`);
+    }
+    relationships.push({
+      proposal: proposal as number,
+      name,
+      status: 'scheduled',
+      order: SCHEDULED_ORDER_BASE + order,
+      source: `Forkcast ${filename}`,
+    });
+  }
+  return relationships;
+}
+
+export interface BpoMetaUpgrade {
+  meta: number;
+  name: string;
+  status: UpgradeStatus;
+  /** Unix activation time in milliseconds; absent for an incomplete draft. */
+  activation?: number;
+  requires: number[];
+}
+
+/** Extracts BPO activation data from a BPO Meta EIP, ignoring other EIPs. */
+export function parseBpoMeta(raw: string): BpoMetaUpgrade | null {
+  const fm = parseFrontmatter(raw);
+  if (!fm) return null;
+  const title = str(fm.title);
+  const looksLikeBpoMeta = /\bBPO\d*\b/i.test(title) && /Hardfork Meta/i.test(title);
+  if (str(fm.type) !== 'Meta') {
+    if (looksLikeBpoMeta) throw new Error(`${title}: BPO hardfork record is not a Meta EIP`);
+    return null;
+  }
+  const titleMatch = /^Hardfork Meta\s*-\s*BPO(\d+)$/i.exec(title);
+  if (!titleMatch) {
+    if (looksLikeBpoMeta) throw new Error(`${title}: unrecognized BPO Meta EIP title`);
+    return null;
+  }
+
+  const meta = Number(fm.eip);
+  if (!Number.isInteger(meta) || meta <= 0) throw new Error('BPO Meta EIP has an invalid eip number');
+  const bpoNumber = Number(titleMatch[1]);
+  if (!Number.isInteger(bpoNumber) || bpoNumber <= 0) {
+    throw new Error(`EIP-${meta}: invalid BPO number in title`);
+  }
+  const status = str(fm.status);
+  if (!KNOWN_STATUSES.has(status)) {
+    throw new Error(`EIP-${meta}: unrecognized BPO Meta EIP status ${JSON.stringify(status)}`);
+  }
+  if (!/\bmainnet\b/i.test(str(fm.description))) {
+    throw new Error(`EIP-${meta}: BPO Meta EIP does not identify a mainnet activation`);
+  }
+
+  const identifiers = [...raw.matchAll(/^\|\s*BPO Identifier\s*\|\s*([^|]+?)\s*\|\s*$/gim)];
+  if (identifiers.length !== 1 || identifiers[0]![1]!.trim().toUpperCase() !== `BPO${bpoNumber}`) {
+    throw new Error(`EIP-${meta}: BPO Identifier does not match the title`);
+  }
+  const activationRows = [
+    ...raw.matchAll(/^\|\s*Activation Time \(UTC\)\s*\|\s*([^|]*?)\s*\|\s*$/gim),
+  ];
+  if (activationRows.length !== 1) {
+    throw new Error(`EIP-${meta}: expected exactly one BPO activation time`);
+  }
+  const activationValue = activationRows[0]![1]!.trim();
+  let seconds: number | undefined;
+  if (/^\d+$/.test(activationValue)) {
+    seconds = Number(activationValue);
+    if (!Number.isSafeInteger(seconds) || seconds <= 0) {
+      throw new Error(`EIP-${meta}: invalid BPO activation time`);
+    }
+  } else if (activationValue !== '<!-- TODO -->') {
+    throw new Error(`EIP-${meta}: invalid BPO activation time ${JSON.stringify(activationValue)}`);
+  }
+  if (status === 'Final' && seconds === undefined) {
+    throw new Error(`EIP-${meta}: Final BPO Meta EIP has no concrete activation time`);
+  }
+
+  return {
+    meta,
+    name: `BPO${bpoNumber}`,
+    status: status === 'Final' ? 'included' : 'scheduled',
+    activation: seconds === undefined ? undefined : seconds * 1000,
+    requires: parseBpoRequires(meta, fm.requires),
+  };
+}
+
+function parseBpoRequires(meta: number, value: unknown): number[] {
+  const tokens = str(value).split(/[,\s]+/).filter(Boolean);
+  const requires = tokens.map((token) => {
+    if (!/^\d+$/.test(token)) {
+      throw new Error(`EIP-${meta}: invalid BPO requirement ${JSON.stringify(token)}`);
+    }
+    const required = Number(token);
+    if (!Number.isSafeInteger(required) || required <= 0) {
+      throw new Error(`EIP-${meta}: invalid BPO requirement ${JSON.stringify(token)}`);
+    }
+    return required;
+  });
+  if (new Set(requires).size !== requires.length) {
+    throw new Error(`EIP-${meta}: duplicate BPO requirement`);
+  }
+  return requires;
+}
+
 async function collect(): Promise<Map<number, Proposal>> {
   await mkdir(CACHE, { recursive: true });
   const proposals = new Map<number, Proposal>();
@@ -215,6 +539,83 @@ async function collect(): Promise<Map<number, Proposal>> {
 
   log(`  skipped ${movedStubs} "Moved" stubs`);
   return proposals;
+}
+
+async function collectBpoMetas(): Promise<BpoMetaUpgrade[]> {
+  const dir = path.join(CACHE, 'EIPs-master', 'EIPS');
+  const files = (await readdir(dir)).filter((file) => file.endsWith('.md')).sort();
+  const metas: BpoMetaUpgrade[] = [];
+  for (const file of files) {
+    const meta = parseBpoMeta(await readFile(path.join(dir, file), 'utf8'));
+    if (meta) metas.push(meta);
+  }
+  if (metas.length === 0) throw new Error('EIPs archive: no BPO Meta EIPs found');
+  return metas;
+}
+
+async function fetchEelsRelationships(): Promise<UpgradeRelationship[]> {
+  const res = await fetch(EELS_PROTOCOL_HISTORY);
+  if (!res.ok) throw new Error(`EELS protocol history: HTTP ${res.status}`);
+  return parseEelsProtocolHistory(await res.text());
+}
+
+async function collectForkcastRelationships(): Promise<UpgradeRelationship[]> {
+  const tarball = path.join(CACHE, 'forkcast.tar.gz');
+  const tarDir = 'forkcast-main';
+  log('    fetching ethereum/forkcast...');
+  await download(FORKCAST_TARBALL, tarball);
+  await rm(path.join(CACHE, tarDir), { recursive: true, force: true });
+  await exec('tar', ['-xzf', tarball, '-C', CACHE, `${tarDir}/src/data/eips`]);
+
+  const dir = path.join(CACHE, tarDir, 'src', 'data', 'eips');
+  const files = (await readdir(dir)).filter((file) => file.endsWith('.json')).sort();
+  if (files.length === 0) throw new Error('Forkcast: no EIP data files found');
+  const seenIds = new Set<number>();
+  const relationships: UpgradeRelationship[] = [];
+  for (const file of files) {
+    const parsed = parseForkcastEip(await readFile(path.join(dir, file), 'utf8'), file);
+    const id = Number(file.slice(0, -'.json'.length));
+    if (seenIds.has(id)) throw new Error(`Forkcast: duplicate EIP record ${id}`);
+    seenIds.add(id);
+    relationships.push(...parsed);
+  }
+  return relationships;
+}
+
+export function bpoRelationships(
+  metas: BpoMetaUpgrade[],
+  merged: Map<number, Proposal>,
+): UpgradeRelationship[] {
+  const relationships: UpgradeRelationship[] = [];
+  const seenNames = new Set<string>();
+  for (const meta of metas) {
+    if (seenNames.has(meta.name)) throw new Error(`duplicate BPO Meta EIP for ${meta.name}`);
+    seenNames.add(meta.name);
+    // A draft with placeholders (currently BPO3) is not formally scheduled.
+    if (meta.activation === undefined) continue;
+
+    let dependencies = 0;
+    for (const required of meta.requires) {
+      const proposal = merged.get(required);
+      if (!proposal) throw new Error(`EIP-${meta.meta}: required EIP-${required} is missing`);
+      if (proposal.ty === 'Meta') continue;
+      if (proposal.k !== 'eip') {
+        throw new Error(`EIP-${meta.meta}: required ${required} is not an EIP`);
+      }
+      dependencies++;
+      relationships.push({
+        proposal: required,
+        name: meta.name,
+        status: meta.status,
+        order: meta.activation,
+        source: `BPO Meta EIP-${meta.meta}`,
+      });
+    }
+    if (dependencies === 0) {
+      throw new Error(`EIP-${meta.meta}: BPO Meta EIP has no non-Meta protocol dependency`);
+    }
+  }
+  return relationships;
 }
 
 // -- open pull requests ------------------------------------------------------
@@ -651,6 +1052,85 @@ function numbersOf(p: Proposal): number[] {
 }
 
 /**
+ * Deduplicates upstream relationships. A scheduled relationship may coexist
+ * with an EELS activation for the same fork while sources catch up; activation
+ * wins. Every other duplicate is an upstream-data error.
+ */
+export function mergeUpgradeRelationships(
+  relationships: UpgradeRelationship[],
+): UpgradeRelationship[] {
+  const merged = new Map<string, UpgradeRelationship>();
+  for (const relationship of relationships) {
+    const key = `${relationship.proposal}\u0000${relationship.name}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, relationship);
+      continue;
+    }
+    if (existing.status !== relationship.status) {
+      const included = existing.status === 'included' ? existing : relationship;
+      const scheduled = existing.status === 'scheduled' ? existing : relationship;
+      if (included.source === 'EELS' && scheduled.status === 'scheduled') {
+        merged.set(key, included);
+        continue;
+      }
+    }
+    throw new Error(
+      `duplicate upgrade relationship EIP-${relationship.proposal} / ${relationship.name} ` +
+        `(${existing.source}, ${relationship.source})`,
+    );
+  }
+  return [...merged.values()];
+}
+
+/** Resolves and attaches relationships, returning missing/ambiguous references. */
+export function attachUpgradeRelationships(
+  proposals: Proposal[],
+  relationships: UpgradeRelationship[],
+): string[] {
+  const errors: string[] = [];
+  const assignments: Array<{ proposal: Proposal; relationship: UpgradeRelationship }> = [];
+
+  for (const relationship of mergeUpgradeRelationships(relationships)) {
+    // Upgrade sources describe EIPs. ERCs never inherit membership through
+    // `requires`, even when an ERC and EIP happen to share a number.
+    const matches = proposals.filter(
+      (proposal) => proposal.k === 'eip' && proposal.n === relationship.proposal,
+    );
+    if (matches.length === 0) {
+      errors.push(
+        `${relationship.source}: EIP-${relationship.proposal} referenced by ${relationship.name} is missing`,
+      );
+    } else if (matches.length > 1) {
+      errors.push(
+        `${relationship.source}: EIP-${relationship.proposal} referenced by ${relationship.name} is ambiguous`,
+      );
+    } else {
+      assignments.push({ proposal: matches[0]!, relationship });
+    }
+  }
+
+  if (errors.length) return errors;
+  const byProposal = new Map<Proposal, UpgradeRelationship[]>();
+  for (const assignment of assignments) {
+    const list = byProposal.get(assignment.proposal);
+    if (list) list.push(assignment.relationship);
+    else byProposal.set(assignment.proposal, [assignment.relationship]);
+  }
+  for (const [proposal, upgrades] of byProposal) {
+    proposal.u = upgrades
+      .sort(
+        (a, b) =>
+          Number(a.status === 'scheduled') - Number(b.status === 'scheduled') ||
+          a.order - b.order ||
+          a.name.localeCompare(b.name),
+      )
+      .map(({ name: n, status: s }) => ({ n, s }));
+  }
+  return errors;
+}
+
+/**
  * An alias targeting an open pull request expires at the configured boundary.
  */
 export function isStaleOpenAlias(
@@ -666,6 +1146,7 @@ export function isStaleOpenAlias(
 async function main() {
   log('Building EIP/ERC dataset');
   const merged = await collect();
+  const bpoMetas = await collectBpoMetas();
 
   log('  validating merged tier against eips.ethereum.org/all...');
   const site = await fetchSiteIndex();
@@ -684,9 +1165,24 @@ async function main() {
   const aliasErrors = await applyAliases(merged, unmerged);
   if (aliasErrors.length) fail(aliasErrors);
 
-  // Merged entries keep their exact existing shape, so the site cross-check above
-  // stays meaningful. Within one number, merged first, then earliest PR first --
-  // see the plan's note on why not by last-updated.
+  log('  indexing mainnet upgrade membership...');
+  const [eelsRelationships, forkcastRelationships] = await Promise.all([
+    fetchEelsRelationships(),
+    collectForkcastRelationships(),
+  ]);
+  const bpo = bpoRelationships(bpoMetas, merged);
+  const upgradeErrors = attachUpgradeRelationships(
+    [...merged.values(), ...unmerged],
+    [...eelsRelationships, ...forkcastRelationships, ...bpo],
+  );
+  if (upgradeErrors.length) fail(upgradeErrors);
+  log(
+    `    ${eelsRelationships.length} EELS + ${forkcastRelationships.length} scheduled + ` +
+      `${bpo.length} BPO relationships`,
+  );
+
+  // Within one number, merged first, then earliest PR first -- see the plan's
+  // note on why not by last-updated.
   const sorted = [...merged.values(), ...unmerged].sort(
     (a, b) =>
       a.n - b.n ||
