@@ -719,12 +719,12 @@ try {
   await clearSelection();
   await setSetting({ debugMode: true });
 
-  if (await selectText('#debug-miss', '9999')) {
+  if (await selectText('#debug-miss', '9998')) {
     const t = await waitForTooltip('Not in the bundled dataset');
     console.log(`      tooltip: ${summarize(t)}`);
     check(
       'debug mode reports an unknown number',
-      t.includes('EIP-9999') && t.includes('Not in the bundled dataset'),
+      t.includes('EIP-9998') && t.includes('Not in the bundled dataset'),
     );
   } else {
     check('debug mode reports an unknown number', false, 'could not select');

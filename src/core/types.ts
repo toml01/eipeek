@@ -30,7 +30,7 @@ export interface Proposal {
   prOpened?: string;
   /**
    * The number in the PR's filename, when it differs from the canonical `n`.
-   * ERC PR #1913 still ships erc-8338.md even though the proposal is ERC-8351,
+   * EIP PR #11595 still ships eip-8242.md although the proposal is EIP-8247,
    * so the source link has to use this rather than `n`.
    */
   prFileN?: number;

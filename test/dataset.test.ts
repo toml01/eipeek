@@ -211,15 +211,14 @@ describe('aliases', () => {
   });
 
   it('files the renumbered ERC under 8351 and keeps 8338 resolving', () => {
-    // ERCs PR #1913 still ships erc-8338.md, but the forum thread redirects to
-    // erc-8351-..., so 8351 is the assigned number.
+    // ERCs PR #1913 now ships erc-8351.md, while the old forum slug and alias
+    // preserve 8338 as a historical lookup number.
     const p = resolve(8351);
     expect(p).toHaveLength(1);
-    expect(p[0]!.t).toBe('Prediction Market CTF Wrapper');
+    expect(p[0]!.t).toBe('Prediction Market Conditional Tokens wrapper');
     expect(p[0]!.aka).toEqual([8338]);
-    expect(p[0]!.prFileN).toBe(8338);
-    // The source link must follow the filename, not the canonical number.
-    expect(sourceUrl(p[0]!)).toContain('/ERCS/erc-8338.md');
+    expect(p[0]!.prFileN).toBeUndefined();
+    expect(sourceUrl(p[0]!)).toContain('/ERCS/erc-8351.md');
   });
 
   it('leaves 8338 contested between the two claimants', () => {

@@ -18,7 +18,7 @@
       "pr": 1913,
       "repo": "ERCs"
     },
-    "reason": "Editors assigned ERC-8351; PR #1913 uses erc-8338.md; PR #1879 claims ERC-8338."
+    "reason": "Editors assigned ERC-8351; PR #1913 previously used erc-8338.md; PR #1879 claims ERC-8338."
   },
   {
     "canonical": 8247,
@@ -40,7 +40,7 @@
       "pr": 12154,
       "repo": "EIPs"
     },
-    "reason": "Editors assigned EIP-8379; PR #12154 still uses eip-8373.md; ERCs PR #1932 claims ERC-8373."
+    "reason": "Editors assigned EIP-8379; PR #12154 previously used eip-8373.md; ERCs PR #1932 claims ERC-8373."
   },
   {
     "canonical": 8345,

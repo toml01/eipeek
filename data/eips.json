@@ -4910,15 +4910,21 @@
   },
   {
     "n": 3298,
-    "t": "Removal of refunds",
-    "d": "",
-    "s": "Stagnant",
+    "t": "Remove storage-clear refund and refund cap",
+    "d": "Removes the SSTORE storage-clearing refund and the transaction refund cap, leaving only net-metered same-transaction write reversals",
+    "s": "Draft",
     "ty": "Standards Track",
     "c": "Core",
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-3298-removal-of-refunds/5430",
     "cr": "2021-02-26",
-    "req": []
+    "req": [
+      2780,
+      3529,
+      7778,
+      8037,
+      8038
+    ]
   },
   {
     "n": 3300,
@@ -8022,7 +8028,7 @@
     "n": 5920,
     "t": "PAY opcode",
     "d": "Introduces a new opcode, PAY, to send ether to an address without calling any of its functions",
-    "s": "Stagnant",
+    "s": "Draft",
     "ty": "Standards Track",
     "c": "Core",
     "k": "eip",
@@ -11189,14 +11195,7 @@
     "k": "eip",
     "disc": "https://ethereum-magicians.org/t/eip-revert-creation-in-case-of-non-empty-storage/18452",
     "cr": "2024-02-02",
-    "req": [],
-    "u": [
-      {
-        "n": "Glamsterdam",
-        "s": "scheduled",
-        "m": 7773
-      }
-    ]
+    "req": []
   },
   {
     "n": 7612,
@@ -13244,23 +13243,6 @@
     "disc": "https://ethereum-magicians.org/t/erc-7813-store-table-based-introspectable-storage/21628",
     "cr": "2024-11-08",
     "req": []
-  },
-  {
-    "n": 7814,
-    "t": "Introspection opcodes",
-    "d": "Introspection opcodes that expose the current block context to the EVM",
-    "s": "Draft",
-    "ty": "Standards Track",
-    "c": "Core",
-    "k": "eip",
-    "disc": "https://ethereum-magicians.org/t/eip-7814-introspection-precompiles/21872",
-    "cr": "2024-11-09",
-    "req": [],
-    "pr": 9028,
-    "prRepo": "EIPs",
-    "prRef": "4c17e3a5c9082dab779baf819bf2f5731ad64b05",
-    "prHead": "Brechtpd/EIPs",
-    "prOpened": "2024-11-09T14:47:43Z"
   },
   {
     "n": 7818,
@@ -15879,9 +15861,10 @@
       6110,
       7002,
       7251,
+      7688,
       7732,
-      7892,
-      7928
+      7928,
+      8282
     ]
   },
   {
@@ -17804,7 +17787,7 @@
     "n": 8153,
     "t": "Facet-Based Diamonds",
     "d": "Simplifies diamond management, deployment and upgrades.",
-    "s": "Draft",
+    "s": "Review",
     "ty": "Standards Track",
     "c": "ERC",
     "k": "erc",
@@ -18302,12 +18285,7 @@
       2612,
       5267,
       6492
-    ],
-    "pr": 1587,
-    "prRepo": "ERCs",
-    "prRef": "ff1b3edba5a3e8b514cee0d432cc0ac268ffdcaf",
-    "prHead": "gnarvaja/ERCs",
-    "prOpened": "2026-03-06T16:29:39Z"
+    ]
   },
   {
     "n": 8188,
@@ -18590,7 +18568,7 @@
   {
     "n": 8205,
     "t": "Withdrawal credentials preregistration",
-    "d": "Bind a validator public key to withdrawal credentials before deposit via an EL system contract enforced by the CL",
+    "d": "Bind a validator public key to withdrawal credentials before validator deposit via an EL system contract enforced by the CL",
     "s": "Draft",
     "ty": "Standards Track",
     "c": "Core",
@@ -18598,7 +18576,6 @@
     "disc": "https://ethereum-magicians.org/t/eip-8205-withdrawal-credentials-preregistration/28084",
     "cr": "2026-03-26",
     "req": [
-      4788,
       6110,
       7685,
       7732
@@ -18700,7 +18677,7 @@
   {
     "n": 8213,
     "t": "Wallet Signature and Calldata Digest Display",
-    "d": "Defines digest terminology and display requirements for EIP-712 signed data and transaction calldata in wallets.",
+    "d": "Defines digest terminology and display requirements for ERC-191 and EIP-712 signed data and transaction calldata in wallets.",
     "s": "Draft",
     "ty": "Standards Track",
     "c": "ERC",
@@ -18713,7 +18690,7 @@
     ],
     "pr": 1639,
     "prRepo": "ERCs",
-    "prRef": "cf69ee0f7b30722c1c4c2da2f66d44c11dd3111e",
+    "prRef": "40b13cb779e069ba17632040a89b431fdd540299",
     "prHead": "PatrickAlphaC/ERCs",
     "prOpened": "2026-03-30T21:39:55Z"
   },
@@ -19611,7 +19588,7 @@
     ],
     "pr": 1752,
     "prRepo": "ERCs",
-    "prRef": "07701aa99c0c415d6ee62652762da5f2797c7d8f",
+    "prRef": "ba7d1a52b8dc452729b59fd796c9c061cbdef455",
     "prHead": "clavote-boop/ERCs",
     "prOpened": "2026-05-17T22:56:55Z"
   },
@@ -20108,7 +20085,7 @@
     ],
     "pr": 1808,
     "prRepo": "ERCs",
-    "prRef": "8b991c90465e3e4bee0e47e2ac47fcdc9762b94a",
+    "prRef": "3383d36ab274144c9db522167faa596cb72194b3",
     "prHead": "pokt-network/ERCs",
     "prOpened": "2026-06-10T00:04:11Z"
   },
@@ -20376,7 +20353,7 @@
     ],
     "pr": 1826,
     "prRepo": "ERCs",
-    "prRef": "702f1cd766033d0a93649eb0a4af1866f43152cc",
+    "prRef": "d97eea0333a8c1c275f185fd382ccb877138bcb5",
     "prHead": "TMerlini/ERCs",
     "prOpened": "2026-06-19T13:00:38Z"
   },
@@ -20426,7 +20403,7 @@
     ],
     "pr": 1833,
     "prRepo": "ERCs",
-    "prRef": "d625dcb22f1d793e2bc0a39bd791dd925a19e5aa",
+    "prRef": "d94cacf89287a295823ce43e560a575c0cc25e21",
     "prHead": "0x2kNJ/ERCs",
     "prOpened": "2026-06-23T14:46:26Z"
   },
@@ -20792,7 +20769,7 @@
     "req": [],
     "pr": 11905,
     "prRepo": "EIPs",
-    "prRef": "5e818639a495c095e39eccca4e96c4d9b29962a8",
+    "prRef": "09b25ff64900f729d845c120afa44c0f21b7ce5e",
     "prHead": "sukunrt/EIPs",
     "prOpened": "2026-07-09T12:03:23Z"
   },
@@ -21080,13 +21057,13 @@
   },
   {
     "n": 8351,
-    "t": "Prediction Market CTF Wrapper",
+    "t": "Prediction Market Conditional Tokens wrapper",
     "d": "Factory and ERC-20 wrapper for Conditional Tokens positions, exposing position parameters and complete-set operations",
     "s": "Draft",
     "ty": "Standards Track",
     "c": "ERC",
     "k": "erc",
-    "disc": "https://ethereum-magicians.org/t/erc-8338-prediction-market-ctf-wrapper/29106",
+    "disc": "https://ethereum-magicians.org/t/erc-8351-prediction-market-ctf-wrapper/29106",
     "cr": "2026-07-25",
     "req": [
       20,
@@ -21094,10 +21071,9 @@
     ],
     "pr": 1913,
     "prRepo": "ERCs",
-    "prRef": "bd5a74eafb602254f17e4055a7f05440379874ba",
+    "prRef": "50c225c2f69ad46725ad54089ed0509443f3ce58",
     "prHead": "martchelo-eth/ERCs",
     "prOpened": "2026-07-27T14:47:46Z",
-    "prFileN": 8338,
     "aka": [
       8338
     ]
@@ -21132,7 +21108,7 @@
     "req": [],
     "pr": 1920,
     "prRepo": "ERCs",
-    "prRef": "bf1b78480bfd26b27e04d6d8d5a7b3e2daff0bf0",
+    "prRef": "2a3cb61fa41cf29c4266a420443ccb56898b4117",
     "prHead": "jamesavechives/ERCs",
     "prOpened": "2026-07-30T08:38:38Z"
   },
@@ -21153,7 +21129,7 @@
     ],
     "pr": 1919,
     "prRepo": "ERCs",
-    "prRef": "31a614e45088706ce5aac589a85829beb9100549",
+    "prRef": "f460c01c91f6032178d03c948a918a30231e37bb",
     "prHead": "mzf11125/mzf11125-ERCs",
     "prOpened": "2026-07-30T05:24:02Z"
   },
@@ -21509,7 +21485,7 @@
     "req": [],
     "pr": 1932,
     "prRepo": "ERCs",
-    "prRef": "5d77b0a9fb3324d4aa37c3338afe8003566f76cc",
+    "prRef": "c9c2c299b14674fb2c05b4659e7257148061e32a",
     "prHead": "TMerlini/ERCs",
     "prOpened": "2026-08-06T10:42:31Z"
   },
@@ -21568,7 +21544,7 @@
     ],
     "pr": 1942,
     "prRepo": "ERCs",
-    "prRef": "3588a8f3f528b402efa8b8043f11ecc525bcbf33",
+    "prRef": "082d40053b97af31795e7a2cbb19f4909f748055",
     "prHead": "Cybercentry/ERCs",
     "prOpened": "2026-08-13T06:52:43Z"
   },
@@ -21620,15 +21596,14 @@
     "ty": "Standards Track",
     "c": "Core",
     "k": "eip",
-    "disc": "https://ethereum-magicians.org/t/eip-0000-top-up-sync/29405",
+    "disc": "https://ethereum-magicians.org/t/eip-8379-top-up-sync/29405",
     "cr": "2026-08-06",
     "req": [],
     "pr": 12154,
     "prRepo": "EIPs",
-    "prRef": "78e6c35e1ddbec1bfc9698ad190b8ccc1a6b8c60",
+    "prRef": "a56782652bfc15f4e12fddf1e3836d4d3842a836",
     "prHead": "RazorClient/EIPs",
     "prOpened": "2026-08-13T12:02:15Z",
-    "prFileN": 8373,
     "aka": [
       8373
     ]
@@ -21650,7 +21625,7 @@
     ],
     "pr": 1953,
     "prRepo": "ERCs",
-    "prRef": "4305751193eebbe011450ac7410ca61b619509af",
+    "prRef": "625da1269c1b17c726eeb1d15f314a0cce6e74be",
     "prHead": "mzf11125/mzf11125-ERCs",
     "prOpened": "2026-08-16T19:32:19Z"
   },
@@ -21676,6 +21651,105 @@
     "prOpened": "2026-08-17T07:10:29Z"
   },
   {
+    "n": 8383,
+    "t": "Reduce CL Block Retention Window",
+    "d": "Reduce required beacon block retention window to 8192 epochs",
+    "s": "Draft",
+    "ty": "Informational",
+    "c": "",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/eip-8383-reduce-cl-block-retention-window/29449",
+    "cr": "2026-08-17",
+    "req": [],
+    "pr": 12188,
+    "prRepo": "EIPs",
+    "prRef": "9f7c34af6c079e225cec7fc19b715a5731e2969d",
+    "prHead": "kevaundray/EIPs",
+    "prOpened": "2026-08-17T22:15:43Z"
+  },
+  {
+    "n": 8384,
+    "t": "Deterministic sync committee aggregators",
+    "d": "Select sync committee aggregators as a function of beacon state",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/eip-8384-deterministic-sync-committee-aggregators/29465",
+    "cr": "2026-08-19",
+    "req": [],
+    "pr": 12207,
+    "prRepo": "EIPs",
+    "prRef": "00d858c4d04d4fd959d5d94116ab0444162a2616",
+    "prHead": "kevaundray/EIPs",
+    "prOpened": "2026-08-19T15:36:04Z"
+  },
+  {
+    "n": 8386,
+    "t": "Transaction Events View",
+    "d": "Expose the current transaction's emitted events through the EIP-8130 Transaction Context precompile, enabling in-phase outcome assertions",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/eip-8386-transaction-events-view/29472",
+    "cr": "2026-08-21",
+    "req": [
+      8130
+    ],
+    "pr": 12218,
+    "prRepo": "EIPs",
+    "prRef": "3ce095f6f63a25491603a12a4dfe47fa91bd66fc",
+    "prHead": "chunter-cb/EIPs",
+    "prOpened": "2026-08-21T11:07:36Z"
+  },
+  {
+    "n": 8387,
+    "t": "Stateless Accounts",
+    "d": "Add ephemeral (privacy) accounts with no Keystore write; the same entry also enables long-lived stateless use",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/eip-8387-stateless-accounts/29473",
+    "cr": "2026-08-21",
+    "req": [
+      1153,
+      1271,
+      8130
+    ],
+    "pr": 12221,
+    "prRepo": "EIPs",
+    "prRef": "0d5953c3308abae0e15647909609615d4ff8e6d6",
+    "prHead": "chunter-cb/EIPs",
+    "prOpened": "2026-08-21T11:40:13Z"
+  },
+  {
+    "n": 8388,
+    "t": "Keystore Signatures for Execution Txs",
+    "d": "Verify EIP-2930 and EIP-1559 signatures through the Keystore so those types can use post-quantum authenticators",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "TBD",
+    "cr": "2026-08-21",
+    "req": [
+      1271,
+      1559,
+      2718,
+      2930,
+      4844,
+      7702,
+      8130
+    ],
+    "pr": 12222,
+    "prRepo": "EIPs",
+    "prRef": "36d7c61e1650baf38e6cc292d36c499fcdfbd62c",
+    "prHead": "chunter-cb/EIPs",
+    "prOpened": "2026-08-21T12:27:37Z"
+  },
+  {
     "n": 9000,
     "t": "Grant CROPS Builders (Protocol Guild Members) Transfer Rights Over Milady Maker Tokens",
     "d": "",
@@ -21691,5 +21765,22 @@
     "prRef": "2629572829562c8da632ea5bfb7a42faa2c2491a",
     "prHead": "CROPSdev/EIPs",
     "prOpened": "2026-03-26T21:36:34Z"
+  },
+  {
+    "n": 9999,
+    "t": "Remove the Sync Committee",
+    "d": "Remove the onchain Altair sync committee and its rewards, superseded by offchain ZK proofs",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/eip-9999-remove-the-sync-committee/29500",
+    "cr": "2026-08-22",
+    "req": [],
+    "pr": 12228,
+    "prRepo": "EIPs",
+    "prRef": "0900d3d866e8880148689cca12ee53bad22bfe63",
+    "prHead": "dapplion/EIPs",
+    "prOpened": "2026-08-22T11:38:47Z"
   }
 ]
