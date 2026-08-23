@@ -13,7 +13,7 @@
  * break a build, and because it produces false positives: a `discussions-to`
  * pointing at the wrong thread will report a disagreement that is not one.
  */
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -23,6 +23,17 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const CONCURRENCY = 2;
 const DELAY_MS = 250;
 const RETRY_PAUSE_MS = 4000;
+
+/** Mirrors the maintenance skill's retry policy: honor a server reset time only
+ *  up to 120 s, and otherwise stop and report it rather than hold the run open. */
+const MAX_RETRY_AFTER_MS = 120_000;
+
+const CACHE_FILE = path.join(ROOT, '.cache', 'review-forum.json');
+
+/** A day, so retries minutes apart resume instead of re-asking ~200 topics, while
+ *  the roughly weekly run still re-verifies every match -- a stale match turning
+ *  into a disagreement is the renumbering signal this tool exists to catch. */
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface Proposal {
   n: number;
@@ -104,6 +115,24 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out;
 }
 
+/**
+ * How long to wait before retrying a rate-limited request, or null when the server
+ * asked for longer than the cap. Null means "do not wait": a run that sleeps for
+ * the forum's whole reset window is a run nobody waits for, so the caller reports
+ * the reset time instead.
+ */
+export function retryDelayMs(
+  res: Response,
+  fallbackMs: number,
+  capMs = MAX_RETRY_AFTER_MS,
+): number | null {
+  const raw = res.headers.get('retry-after')?.trim();
+  const seconds = raw ? Number(raw) : Number.NaN;
+  if (!Number.isFinite(seconds)) return fallbackMs;
+  const ms = seconds * 1000;
+  return ms <= capMs ? ms : null;
+}
+
 /** Follows the thread and reads the proposal number out of the final slug. */
 export async function askForum(
   p: Proposal,
@@ -118,7 +147,17 @@ export async function askForum(
     }
     if (res.status === 429) {
       if (attempt === 0) {
-        await sleep(retryPauseMs);
+        const wait = retryDelayMs(res, retryPauseMs);
+        if (wait === null) {
+          const after = res.headers.get('retry-after')?.trim();
+          return {
+            kind: 'unchecked',
+            why:
+              `rate limited (429), Retry-After ${after}s ` +
+              `exceeds ${MAX_RETRY_AFTER_MS / 1000}s cap`,
+          };
+        }
+        await sleep(wait);
         continue;
       }
       return { kind: 'unchecked', why: 'rate limited (429)' };
@@ -136,6 +175,40 @@ export async function askForum(
     return forum === p.n ? { kind: 'match' } : { kind: 'disagrees', forum, final: res.url };
   }
   return { kind: 'unchecked', why: 'rate limited (429)' };
+}
+
+export interface ReviewCache {
+  version: number;
+  entries: Record<string, { n: number; at: number }>;
+}
+
+const EMPTY_CACHE = (): ReviewCache => ({ version: 1, entries: {} });
+
+/** A cache is an optimisation, never evidence, so anything unreadable or written
+ *  by an older format is discarded rather than repaired. */
+export async function loadReviewCache(file: string): Promise<ReviewCache> {
+  try {
+    const parsed = JSON.parse(await readFile(file, 'utf8')) as ReviewCache;
+    if (parsed?.version !== 1 || typeof parsed.entries !== 'object' || parsed.entries === null) {
+      return EMPTY_CACHE();
+    }
+    return parsed;
+  } catch {
+    return EMPTY_CACHE();
+  }
+}
+
+export async function saveReviewCache(file: string, cache: ReviewCache) {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify(cache, null, 2)}\n`, 'utf8');
+}
+
+/** Keyed on the discussion URL, but the number is checked too: our file can
+ *  renumber a proposal under a URL that never changes, and skipping that case is
+ *  exactly the failure this tool exists to prevent. */
+export function cacheHit(cache: ReviewCache, p: Proposal, now = Date.now()): boolean {
+  const entry = cache.entries[p.disc];
+  return entry !== undefined && entry.n === p.n && now - entry.at < CACHE_TTL_MS;
 }
 
 async function main() {
@@ -164,14 +237,27 @@ async function main() {
     else placeholders.push({ p, why });
   }
 
-  log(`Asking the forum about ${toCheck.length} open-PR proposals.`);
+  const noCache = process.argv.includes('--no-cache');
+  const cache = noCache ? EMPTY_CACHE() : await loadReviewCache(CACHE_FILE);
+  const now = Date.now();
+  const cached = toCheck.filter((p) => cacheHit(cache, p, now));
+  const cachedSet = new Set(cached);
+  const toFetch = toCheck.filter((p) => !cachedSet.has(p));
+
+  log(`Asking the forum about ${toFetch.length} open-PR proposals.`);
   log(`Throttled to ${CONCURRENCY} at a time, so this takes a while.`);
+  if (cached.length) {
+    log(
+      `${cached.length} confirmed within the last 24 h skipped ` +
+        '(.cache/review-forum.json; --no-cache re-checks all).',
+    );
+  }
   if (placeholders.length) {
     log(`${placeholders.length} have unusable discussion URLs; reported below, not fetched.`);
   }
   log();
 
-  const results = await mapLimit(toCheck, CONCURRENCY, async (p) => ({
+  const results = await mapLimit(toFetch, CONCURRENCY, async (p) => ({
     p,
     outcome: await askForum(p),
   }));
@@ -180,9 +266,20 @@ async function main() {
   const noNumber = results.filter((r) => r.outcome.kind === 'no-number');
   const missing = results.filter((r) => r.outcome.kind === 'missing');
   const unchecked = results.filter((r) => r.outcome.kind === 'unchecked');
-  const matched = results.filter((r) => r.outcome.kind === 'match').length;
+  const matched = results.filter((r) => r.outcome.kind === 'match').length + cached.length;
 
-  log(`${matched} agree with the forum.`);
+  // Rebuilt from scratch so that only this run's matches survive: a disagreement,
+  // a failure or a vanished topic must be re-examined next time, never inherited.
+  const rebuilt = EMPTY_CACHE();
+  // Carried-over hits keep their original timestamp, so repeated retries cannot
+  // roll the day forward forever and stop the weekly re-verification.
+  for (const p of cached) rebuilt.entries[p.disc] = { n: p.n, at: cache.entries[p.disc]!.at };
+  for (const { p, outcome } of results) {
+    if (outcome.kind === 'match') rebuilt.entries[p.disc] = { n: p.n, at: now };
+  }
+  await saveReviewCache(CACHE_FILE, rebuilt);
+
+  log(`${matched} agree with the forum${cached.length ? ` (${cached.length} from cache)` : ''}.`);
   log();
 
   if (disagrees.length) {
