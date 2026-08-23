@@ -3,19 +3,12 @@
 Source of truth for all facts: `README.md` (regenerate this doc if the counts
 in there drift — they're rebuilt periodically by `npm run data:build`).
 
----
-
-## 1. Short description
-
-**Character count: 130 / 132**
-
-```
-Hover any EIP/ERC reference for its title, status, and links. Offline dataset, zero network requests, nothing leaves your browser.
-```
+The store's summary line is not set here: the Web Store takes it from the
+manifest `description` in `wxt.config.ts`, uploaded with the package.
 
 ---
 
-## 2. Detailed description
+## 1. Detailed description
 
 **Character count: 1831 / 16000**
 
@@ -40,7 +33,7 @@ FEATURES
 
 ---
 
-## 3. Category
+## 2. Category
 
 **Tools**
 
@@ -54,7 +47,7 @@ the audience to engineers.
 
 ---
 
-## 4. Single purpose statement
+## 3. Single purpose statement
 
 *(For the Developer Dashboard's Privacy Practices tab.)*
 
@@ -64,7 +57,7 @@ EIPeek detects EIP and ERC references in the text of the current web page and sh
 
 ---
 
-## 5. Permission justifications
+## 4. Permission justifications
 
 *(For the Developer Dashboard's Privacy Practices tab, which asks for one
 justification per kind of access requested.)*
