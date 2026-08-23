@@ -43,7 +43,44 @@ export type Outcome =
   | { kind: 'match' }
   | { kind: 'disagrees'; forum: number; final: string }
   | { kind: 'no-number'; final: string }
+  | { kind: 'placeholder'; why: string }
+  | { kind: 'missing'; why: string }
   | { kind: 'unchecked'; why: string };
+
+/** True for topic ids no Discourse install ever issued: a filler the author typed
+ *  because the thread did not exist yet. Fetching one only wastes a request. */
+function isFakeTopicId(id: string): boolean {
+  if (Number(id) === 0) return true;
+  if (id.length >= 3 && /^(\d)\1*$/.test(id)) return true;
+  const ascending = [...id].every((d, i, all) => i === 0 || Number(d) === Number(all[i - 1]) + 1);
+  return id.length >= 5 && ascending;
+}
+
+/**
+ * Says why a `discussions-to` URL cannot answer the renumbering question, or null
+ * when it can. The old filter dropped every one of these silently, which read as a
+ * pass; an unusable URL is a finding, not an absence of one.
+ */
+export function classifyDiscussion(disc: string | undefined): string | null {
+  let url: URL;
+  try {
+    url = new URL(disc ?? '');
+  } catch {
+    return 'not a URL';
+  }
+  const parts = url.pathname.split('/').filter(Boolean);
+  const magicians = /(^|\.)ethereum-magicians\.org$/.test(url.hostname);
+  if (!magicians || parts[0] !== 't' || parts.length < 2) {
+    return 'not an ethereum-magicians topic';
+  }
+
+  // Discourse paths are /t/<slug>/<id>[/<post>], so the third segment is the topic
+  // id even when the URL is a permalink to one post inside the thread.
+  const id = parts[2] ?? parts[1]!;
+  if (!/^\d+$/.test(id)) return `topic id ${JSON.stringify(id)} is not numeric`;
+  if (isFakeTopicId(id)) return `placeholder topic id ${id}`;
+  return null;
+}
 
 function log(msg = '') {
   process.stdout.write(`${msg}\n`);
@@ -86,6 +123,11 @@ export async function askForum(
       }
       return { kind: 'unchecked', why: 'rate limited (429)' };
     }
+    // A topic that is gone stays gone, so this is a finding to fix upstream rather
+    // than something a later rerun could resolve.
+    if (res.status === 404 || res.status === 410) {
+      return { kind: 'missing', why: `HTTP ${res.status}` };
+    }
     if (!res.ok) return { kind: 'unchecked', why: `HTTP ${res.status}` };
 
     const m = /\/t\/(?:eip|erc|rip)-(\d+)-/.exec(res.url);
@@ -109,28 +151,36 @@ async function main() {
   }
   const coveredPrs = new Set(aliases.map((a) => a.target.pr).filter(Boolean));
 
-  // Only open-PR proposals can be renumbered, and only a Magicians thread carries
-  // the number in its slug. Anything already aliased is settled.
-  const candidates = proposals.filter(
-    (p) =>
-      p.pr !== undefined &&
-      !coveredPrs.has(p.pr) &&
-      /ethereum-magicians\.org\/t\//.test(p.disc ?? ''),
-  );
+  // Only open-PR proposals can be renumbered, and anything already aliased is
+  // settled. Candidates whose URL the forum cannot answer for are kept and named
+  // below instead of being filtered out, because a silent drop reads as a pass.
+  const candidates = proposals.filter((p) => p.pr !== undefined && !coveredPrs.has(p.pr));
 
-  log(`Asking the forum about ${candidates.length} open-PR proposals.`);
+  const placeholders: { p: Proposal; why: string }[] = [];
+  const toCheck: Proposal[] = [];
+  for (const p of candidates) {
+    const why = classifyDiscussion(p.disc);
+    if (why === null) toCheck.push(p);
+    else placeholders.push({ p, why });
+  }
+
+  log(`Asking the forum about ${toCheck.length} open-PR proposals.`);
   log(`Throttled to ${CONCURRENCY} at a time, so this takes a while.`);
+  if (placeholders.length) {
+    log(`${placeholders.length} have unusable discussion URLs; reported below, not fetched.`);
+  }
   log();
 
-  const results = await mapLimit(candidates, CONCURRENCY, async (p) => ({
+  const results = await mapLimit(toCheck, CONCURRENCY, async (p) => ({
     p,
     outcome: await askForum(p),
   }));
 
   const disagrees = results.filter((r) => r.outcome.kind === 'disagrees');
   const noNumber = results.filter((r) => r.outcome.kind === 'no-number');
+  const missing = results.filter((r) => r.outcome.kind === 'missing');
   const unchecked = results.filter((r) => r.outcome.kind === 'unchecked');
-  const matched = results.length - disagrees.length - noNumber.length - unchecked.length;
+  const matched = results.filter((r) => r.outcome.kind === 'match').length;
 
   log(`${matched} agree with the forum.`);
   log();
@@ -169,8 +219,29 @@ async function main() {
 
   if (noNumber.length) {
     log(`${noNumber.length} thread titles carry no number, so the forum cannot say:`);
-    for (const { p } of noNumber.slice(0, 10)) log(`    ${p.k}-${p.n} PR #${p.pr}`);
-    if (noNumber.length > 10) log(`    ...and ${noNumber.length - 10} more`);
+    for (const { p } of noNumber) log(`    ${p.k}-${p.n} PR #${p.pr}`);
+    log();
+  }
+
+  if (placeholders.length) {
+    log(
+      `${placeholders.length} have discussion URLs this check cannot use. ` +
+        'Deterministic; fix discussions-to upstream:',
+    );
+    for (const { p, why } of placeholders) {
+      log(`    ${p.k}-${p.n} PR #${p.pr} -- ${why} -- ${p.disc}`);
+    }
+    log();
+  }
+
+  if (missing.length) {
+    log(
+      `${missing.length} point at forum topics that do not exist. ` +
+        'Deterministic, not retry candidates:',
+    );
+    for (const { p, outcome } of missing) {
+      log(`    ${p.k}-${p.n} PR #${p.pr} -- ${(outcome as { why: string }).why} -- ${p.disc}`);
+    }
     log();
   }
 
@@ -179,10 +250,9 @@ async function main() {
   // quietly useless -- a rate-limited sweep once hid the 8351 case completely.
   if (unchecked.length) {
     log(`${unchecked.length} COULD NOT BE CHECKED. These are not passes:`);
-    for (const { p, outcome } of unchecked.slice(0, 10)) {
+    for (const { p, outcome } of unchecked) {
       log(`    ${p.k}-${p.n} PR #${p.pr} -- ${(outcome as { why: string }).why}`);
     }
-    if (unchecked.length > 10) log(`    ...and ${unchecked.length - 10} more`);
     log();
     log('Rerun later to check them.');
   }
