@@ -1279,7 +1279,7 @@ async function main() {
  * 8363, and 8338 to 8351 -- were contested first. It cannot say what the new
  * number will be; `npm run data:review` asks the forum that.
  */
-function reportContested(all: Proposal[], aliased: Set<number>) {
+export function reportContested(all: Proposal[], aliased: Set<number>) {
   const byNumber = new Map<number, Proposal[]>();
   for (const p of all) {
     if (!p.pr) continue;
@@ -1290,7 +1290,11 @@ function reportContested(all: Proposal[], aliased: Set<number>) {
   const contested = [...byNumber.entries()]
     .filter(([, list]) => list.length > 1)
     .sort((a, b) => a[0] - b[0]);
-  if (contested.length === 0) return;
+  if (contested.length === 0) {
+    log('');
+    log('REVIEW: 0 numbers claimed by more than one open PR. Nothing to resolve.');
+    return;
+  }
 
   log('');
   log(`REVIEW: ${contested.length} number(s) claimed by more than one open PR.`);

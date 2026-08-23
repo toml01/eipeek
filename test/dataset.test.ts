@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import proposals from '../data/eips.json';
 import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../src/core/numbers.generated';
 import { aliasNumbers, linksFor, sourceUrl, specUrl, statusLine, usableDiscussion } from '../src/core/links';
 import { isUnmerged, type Proposal } from '../src/core/types';
-import { DEFAULT_STALE_ALIAS_DAYS, isStaleOpenAlias } from '../scripts/build-dataset';
+import { DEFAULT_STALE_ALIAS_DAYS, isStaleOpenAlias, reportContested } from '../scripts/build-dataset';
 
 const all = proposals as Proposal[];
 const merged = all.filter((p) => !isUnmerged(p));
@@ -21,6 +21,20 @@ const aliases = JSON.parse(readFileSync('data/aliases.json', 'utf8')) as Array<{
 }>;
 
 const canonicalJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+
+const minimalProposal = (n: number, overrides: Partial<Proposal> = {}): Proposal => ({
+  n,
+  t: 'Test proposal',
+  d: '',
+  s: 'Draft',
+  ty: 'Standards Track',
+  c: 'Core',
+  k: 'eip',
+  disc: '',
+  cr: '2024-01-01',
+  req: [],
+  ...overrides,
+});
 
 describe('dataset integrity', () => {
   it('keeps committed dataset JSON canonically formatted for review', () => {
@@ -365,5 +379,31 @@ describe('links', () => {
         expect(link.url, `eip-${p.n}`).toMatch(/^https:\/\//);
       }
     }
+  });
+});
+
+describe('reportContested', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('prints an explicit clean result when no number is contested', () => {
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    reportContested([minimalProposal(100, { pr: 1 }), minimalProposal(200, { pr: 2 })], new Set());
+    const output = spy.mock.calls.map((call) => call[0]).join('');
+
+    expect(output).toContain('REVIEW: 0 numbers');
+    expect(output).toContain('Nothing to resolve');
+  });
+
+  it('reports a number claimed by two open PRs', () => {
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    reportContested(
+      [minimalProposal(9000, { pr: 1 }), minimalProposal(9000, { pr: 2 })],
+      new Set(),
+    );
+    const output = spy.mock.calls.map((call) => call[0]).join('');
+
+    expect(output).toContain('REVIEW: 1 number(s)');
   });
 });
