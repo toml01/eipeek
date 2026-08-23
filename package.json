@@ -1,6 +1,6 @@
 {
   "name": "eipeek",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Chrome extension that highlights EIP/ERC references on any page and shows the full title, status, and links on hover.",
   "private": true,
   "type": "module",
