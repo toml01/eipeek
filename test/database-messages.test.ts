@@ -10,6 +10,11 @@ describe('database runtime messages', () => {
   it('accepts only fixed database actions with no caller-controlled URL', () => {
     expect(parseRuntimeRequest({ type: 'database.check' })).toEqual({ type: 'database.check' });
     expect(parseRuntimeRequest({ type: 'database.restore' })).toEqual({ type: 'database.restore' });
+    expect(parseRuntimeRequest({ type: 'database.setAutoUpdate', enabled: false })).toEqual({
+      type: 'database.setAutoUpdate',
+      enabled: false,
+    });
+    expect(parseRuntimeRequest({ type: 'database.setAutoUpdate', enabled: 'yes' })).toBeNull();
     expect(
       parseRuntimeRequest({ type: 'database.check', url: 'https://attacker.example/database.json' }),
     ).toBeNull();

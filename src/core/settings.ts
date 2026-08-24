@@ -47,7 +47,10 @@ export function bareNumbersAllowedOn(s: Settings, hostname: string): boolean {
 }
 
 export function onSettingsChanged(fn: (s: Settings) => void): void {
-  browser.storage.onChanged.addListener((_changes, area) => {
-    if (area === 'sync') void getSettings().then(fn);
+  const settingKeys = new Set(Object.keys(DEFAULT_SETTINGS));
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'sync' && Object.keys(changes).some((key) => settingKeys.has(key))) {
+      void getSettings().then(fn);
+    }
   });
 }

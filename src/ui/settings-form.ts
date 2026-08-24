@@ -3,7 +3,7 @@ import { browser } from 'wxt/browser';
 import { DEFAULT_SETTINGS, type Settings } from '../core/types';
 import { FEEDBACK_ISSUE_URL } from '../core/feedback';
 import {
-  isDatabaseActivationChange,
+  isDatabaseUiChange,
   type DatabaseStatus,
   type DatabaseUiResponse,
 } from '../core/database-messages';
@@ -131,6 +131,13 @@ const FORM = `
 
   <section class="database" id="databaseSection" aria-labelledby="database-heading" aria-busy="true">
     <h2 id="database-heading">Database</h2>
+    <label class="database-auto">
+      <input type="checkbox" id="databaseAutoUpdate" data-testid="database-auto-update" />
+      <span>
+        <strong>Update the database automatically each day</strong>
+        <small>Checks GitHub in the background at an approximate daily time.</small>
+      </span>
+    </label>
     <dl class="database-details">
       <div>
         <dt>Active</dt>
@@ -148,10 +155,19 @@ const FORM = `
         <dt>Last check</dt>
         <dd id="databaseLastCheck">—</dd>
       </div>
+      <div>
+        <dt>Next check</dt>
+        <dd id="databaseNextCheck">—</dd>
+      </div>
+      <div>
+        <dt>Last result</dt>
+        <dd id="databaseLastResult">—</dd>
+      </div>
     </dl>
     <small class="database-note">
-      EIPeek contacts GitHub only when you choose Check for updates. Downloaded,
-      signed data stays in this browser; page text and settings are never sent.
+      Daily checks request a small version hint and download signed data only when
+      newer. Manual checks download the signed database directly. Page text and
+      settings are never sent.
     </small>
     <div class="database-actions">
       <button type="button" id="databaseCheck" data-testid="database-check">Check for updates</button>
@@ -187,7 +203,7 @@ const FORM = `
     and
     <a href="https://github.com/ethereum/ERCs" target="_blank" rel="noopener noreferrer">ethereum/ERCs</a>,
     and bundled with the extension. Browsing makes no network requests; only the
-    manual database check above contacts GitHub.
+    daily background check or manual database check above contacts GitHub.
   </footer>
 `;
 
@@ -224,10 +240,13 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
   const disabledSites = $<HTMLTextAreaElement>('disabledSites');
   const saved = $<HTMLParagraphElement>('saved');
   const databaseSection = $<HTMLElement>('databaseSection');
+  const databaseAutoUpdate = $<HTMLInputElement>('databaseAutoUpdate');
   const databaseSource = $<HTMLElement>('databaseSource');
   const databaseVersion = $<HTMLElement>('databaseVersion');
   const databaseState = $<HTMLElement>('databaseState');
   const databaseLastCheck = $<HTMLElement>('databaseLastCheck');
+  const databaseNextCheck = $<HTMLElement>('databaseNextCheck');
+  const databaseLastResult = $<HTMLElement>('databaseLastResult');
   const databaseCheck = $<HTMLButtonElement>('databaseCheck');
   const databaseRestore = $<HTMLButtonElement>('databaseRestore');
   const databaseMessage = $<HTMLParagraphElement>('databaseMessage');
@@ -302,6 +321,7 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
     databaseBusy = busy;
     databaseSection.setAttribute('aria-busy', String(busy));
     databaseCheck.disabled = busy;
+    databaseAutoUpdate.disabled = busy;
     // renderDatabaseStatus restores the source-dependent state after an action.
     databaseRestore.disabled = busy || databaseRestore.dataset.bundled === 'true';
   }
@@ -325,12 +345,24 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
     databaseLastCheck.textContent = status.lastCheckedAt
       ? `${formatDate(status.lastCheckedAt)}${status.lastCheckOutcome === 'error' ? ' · failed' : ''}`
       : 'Never';
+    databaseAutoUpdate.checked = status.autoUpdateEnabled;
+    databaseNextCheck.textContent = status.autoUpdateEnabled
+      ? status.nextScheduledCheckAt
+        ? formatDate(status.nextScheduledCheckAt)
+        : 'Scheduling…'
+      : 'Disabled';
+    databaseLastResult.textContent = status.lastCheckMessage ?? 'No checks yet';
+    databaseLastResult.classList.toggle('error', status.lastCheckOutcome === 'error');
     databaseRestore.dataset.bundled = String(bundled);
     databaseRestore.disabled = databaseBusy || bundled;
   }
 
-  async function sendDatabaseMessage(type: 'database.status' | 'database.check' | 'database.restore') {
-    return (await browser.runtime.sendMessage({ type })) as DatabaseUiResponse | undefined;
+  async function sendDatabaseMessage(
+    type: 'database.status' | 'database.check' | 'database.restore' | 'database.setAutoUpdate',
+    enabled?: boolean,
+  ) {
+    const message = type === 'database.setAutoUpdate' ? { type, enabled } : { type };
+    return (await browser.runtime.sendMessage(message)) as DatabaseUiResponse | undefined;
   }
 
   let statusRefreshSequence = 0;
@@ -371,12 +403,31 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
 
   databaseCheck.addEventListener('click', () => void databaseAction('database.check'));
   databaseRestore.addEventListener('click', () => void databaseAction('database.restore'));
+  databaseAutoUpdate.addEventListener('change', () => {
+    const enabled = databaseAutoUpdate.checked;
+    setDatabaseBusy(true);
+    setDatabaseMessage(enabled ? 'Scheduling daily database checks…' : 'Disabling daily database checks…', 'busy');
+    void sendDatabaseMessage('database.setAutoUpdate', enabled)
+      .then((response) => {
+        if (!response?.ok) throw new Error(response?.message ?? 'The background worker did not respond.');
+        renderDatabaseStatus(response.status);
+        setDatabaseMessage(
+          enabled ? 'Daily automatic database checks enabled.' : 'Daily automatic database checks disabled.',
+          'success',
+        );
+      })
+      .catch((error: unknown) => {
+        databaseAutoUpdate.checked = !enabled;
+        setDatabaseMessage(error instanceof Error ? error.message : 'Could not change automatic checks.', 'error');
+      })
+      .finally(() => setDatabaseBusy(false));
+  });
 
   // A second open popup/options page may perform the action. The session event
   // contains only a revision; fetch the trusted status from the background so
   // source/version/Restore state cannot remain stale and no artifact is exposed.
   browser.storage.onChanged.addListener((changes, areaName) => {
-    if (!isDatabaseActivationChange(changes, areaName)) return;
+    if (!isDatabaseUiChange(changes, areaName)) return;
     void refreshDatabaseStatus().catch(() => {});
   });
 
@@ -388,6 +439,8 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
     databaseSource.textContent = 'Bundled fallback';
     databaseState.textContent = 'Database status is temporarily unavailable';
     databaseLastCheck.textContent = 'Unavailable';
+    databaseNextCheck.textContent = 'Unavailable';
+    databaseLastResult.textContent = 'Unavailable';
     setDatabaseMessage(
       error instanceof Error ? error.message : 'Could not read database status.',
       'error',
