@@ -1,6 +1,12 @@
 import { getSettings, setSettings } from '../core/settings';
+import { browser } from 'wxt/browser';
 import { DEFAULT_SETTINGS, type Settings } from '../core/types';
 import { FEEDBACK_ISSUE_URL } from '../core/feedback';
+import {
+  isDatabaseActivationChange,
+  type DatabaseStatus,
+  type DatabaseUiResponse,
+} from '../core/database-messages';
 import './settings-form.css';
 
 /**
@@ -123,6 +129,44 @@ const FORM = `
 
   <p class="saved" id="saved" hidden>Saved</p>
 
+  <section class="database" id="databaseSection" aria-labelledby="database-heading" aria-busy="true">
+    <h2 id="database-heading">Database</h2>
+    <dl class="database-details">
+      <div>
+        <dt>Active</dt>
+        <dd id="databaseSource">Loading…</dd>
+      </div>
+      <div>
+        <dt>Version</dt>
+        <dd id="databaseVersion">—</dd>
+      </div>
+      <div>
+        <dt>State</dt>
+        <dd id="databaseState">Reading local database…</dd>
+      </div>
+      <div>
+        <dt>Last check</dt>
+        <dd id="databaseLastCheck">—</dd>
+      </div>
+    </dl>
+    <small class="database-note">
+      EIPeek contacts GitHub only when you choose Check for updates. Downloaded,
+      signed data stays in this browser; page text and settings are never sent.
+    </small>
+    <div class="database-actions">
+      <button type="button" id="databaseCheck" data-testid="database-check">Check for updates</button>
+      <button type="button" id="databaseRestore" data-testid="database-restore">Restore bundled database</button>
+    </div>
+    <p
+      class="database-message"
+      id="databaseMessage"
+      data-testid="database-message"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    ></p>
+  </section>
+
   <section class="feedback" aria-labelledby="feedback-heading">
     <strong id="feedback-heading">Feedback</strong>
     <small>
@@ -142,7 +186,8 @@ const FORM = `
     <a href="https://github.com/ethereum/EIPs" target="_blank" rel="noopener noreferrer">ethereum/EIPs</a>
     and
     <a href="https://github.com/ethereum/ERCs" target="_blank" rel="noopener noreferrer">ethereum/ERCs</a>,
-    bundled with the extension. No network requests are made while you browse.
+    and bundled with the extension. Browsing makes no network requests; only the
+    manual database check above contacts GitHub.
   </footer>
 `;
 
@@ -178,6 +223,14 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
   const highlightStyle = $<HTMLSelectElement>('highlightStyle');
   const disabledSites = $<HTMLTextAreaElement>('disabledSites');
   const saved = $<HTMLParagraphElement>('saved');
+  const databaseSection = $<HTMLElement>('databaseSection');
+  const databaseSource = $<HTMLElement>('databaseSource');
+  const databaseVersion = $<HTMLElement>('databaseVersion');
+  const databaseState = $<HTMLElement>('databaseState');
+  const databaseLastCheck = $<HTMLElement>('databaseLastCheck');
+  const databaseCheck = $<HTMLButtonElement>('databaseCheck');
+  const databaseRestore = $<HTMLButtonElement>('databaseRestore');
+  const databaseMessage = $<HTMLParagraphElement>('databaseMessage');
 
   // Both sub-controls only mean anything while bare matching is on. Disabled
   // rather than hidden, so the option is discoverable before it applies and the
@@ -243,4 +296,113 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
   disabledSites.addEventListener('change', () =>
     void save({ disabledSites: parseHostList(disabledSites.value) }),
   );
+
+  let databaseBusy = true;
+  function setDatabaseBusy(busy: boolean) {
+    databaseBusy = busy;
+    databaseSection.setAttribute('aria-busy', String(busy));
+    databaseCheck.disabled = busy;
+    // renderDatabaseStatus restores the source-dependent state after an action.
+    databaseRestore.disabled = busy || databaseRestore.dataset.bundled === 'true';
+  }
+
+  function setDatabaseMessage(message: string, kind: 'busy' | 'success' | 'error' | 'none') {
+    databaseMessage.textContent = message;
+    databaseMessage.className = `database-message ${kind}`;
+    databaseMessage.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    databaseMessage.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
+  }
+
+  function renderDatabaseStatus(status: DatabaseStatus) {
+    const bundled = status.source === 'bundled';
+    databaseSource.textContent = bundled ? 'Bundled fallback' : 'Downloaded and signature-verified';
+    databaseVersion.textContent = String(status.activeVersion);
+    databaseState.textContent = bundled
+      ? status.activatedAt
+        ? `Restored ${formatDate(status.activatedAt)}`
+        : 'Included with this extension release'
+      : `Activated ${formatDate(status.activatedAt)} · ${status.proposalCount.toLocaleString()} proposals`;
+    databaseLastCheck.textContent = status.lastCheckedAt
+      ? `${formatDate(status.lastCheckedAt)}${status.lastCheckOutcome === 'error' ? ' · failed' : ''}`
+      : 'Never';
+    databaseRestore.dataset.bundled = String(bundled);
+    databaseRestore.disabled = databaseBusy || bundled;
+  }
+
+  async function sendDatabaseMessage(type: 'database.status' | 'database.check' | 'database.restore') {
+    return (await browser.runtime.sendMessage({ type })) as DatabaseUiResponse | undefined;
+  }
+
+  let statusRefreshSequence = 0;
+  async function refreshDatabaseStatus(): Promise<void> {
+    const sequence = ++statusRefreshSequence;
+    const response = await sendDatabaseMessage('database.status');
+    if (sequence !== statusRefreshSequence) return;
+    if (!response?.ok) throw new Error(response?.message ?? 'The background worker did not respond.');
+    renderDatabaseStatus(response.status);
+  }
+
+  async function databaseAction(type: 'database.check' | 'database.restore') {
+    if (databaseBusy) return;
+    setDatabaseBusy(true);
+    setDatabaseMessage(
+      type === 'database.check' ? 'Checking GitHub for a signed database…' : 'Restoring bundled database…',
+      'busy',
+    );
+    try {
+      const response = await sendDatabaseMessage(type);
+      if (!response) throw new Error('The background worker did not respond.');
+      if (!response.ok) {
+        if (response.status) renderDatabaseStatus(response.status);
+        throw new Error(response.message);
+      }
+      if (!('message' in response)) throw new Error('The background worker returned an unexpected response.');
+      renderDatabaseStatus(response.status);
+      setDatabaseMessage(response.message, 'success');
+    } catch (error) {
+      setDatabaseMessage(
+        error instanceof Error ? error.message : 'The database action failed.',
+        'error',
+      );
+    } finally {
+      setDatabaseBusy(false);
+    }
+  }
+
+  databaseCheck.addEventListener('click', () => void databaseAction('database.check'));
+  databaseRestore.addEventListener('click', () => void databaseAction('database.restore'));
+
+  // A second open popup/options page may perform the action. The session event
+  // contains only a revision; fetch the trusted status from the background so
+  // source/version/Restore state cannot remain stale and no artifact is exposed.
+  browser.storage.onChanged.addListener((changes, areaName) => {
+    if (!isDatabaseActivationChange(changes, areaName)) return;
+    void refreshDatabaseStatus().catch(() => {});
+  });
+
+  setDatabaseBusy(true);
+  try {
+    await refreshDatabaseStatus();
+    setDatabaseMessage('', 'none');
+  } catch (error) {
+    databaseSource.textContent = 'Bundled fallback';
+    databaseState.textContent = 'Database status is temporarily unavailable';
+    databaseLastCheck.textContent = 'Unavailable';
+    setDatabaseMessage(
+      error instanceof Error ? error.message : 'Could not read database status.',
+      'error',
+    );
+  } finally {
+    setDatabaseBusy(false);
+  }
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return 'unknown time';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return 'unknown time';
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date);
 }

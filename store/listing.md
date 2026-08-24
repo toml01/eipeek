@@ -10,7 +10,7 @@ manifest `description` in `wxt.config.ts`, uploaded with the package.
 
 ## 1. Detailed description
 
-**Character count: 1831 / 16000**
+**Character count: update in the Developer Dashboard before publishing**
 
 ```
 EIPeek finds EIP and ERC references anywhere on a web page — EIP-7702, ERC-20, EIP 3074, even bare numbers like 7702 (if you turn that on) — and gives you a hover card with the all the details you need instead of opening a new tab and search!
@@ -28,7 +28,7 @@ FEATURES
 - Select any number on a page to look it up on demand, prefix or not.
 - Per-site blocking, an adjustable per-page match limit, and a debug mode for when something doesn't resolve.
 - Spotted a wrong or missing entry? The "Mistake?" link in every tooltip opens a prefilled GitHub feedback form.
-- No network requests and no tabs permission. The whole dataset ships inside the extension, so nothing about the pages you read ever leaves your browser.
+- No network requests while you browse and no tabs permission. The whole dataset ships inside the extension. A signed database update is checked only when you click the button; that credentialless GitHub request contains no page data or settings, and verified data stays local.
 ```
 
 ---
@@ -65,7 +65,7 @@ justification per kind of access requested.)*
 ### `storage` — the only entry under `permissions`
 
 ```
-The storage permission stores the user's own extension settings — the bare-number matching toggle, the blocked-sites list, the per-page match cap, and debug mode — locally in the browser.
+The storage permission stores the user's own extension settings, verified database updates downloaded only after a manual check, and a small local activation signal. Settings use browser sync; downloaded proposal data stays local to the device.
 ```
 
 ### Host permission

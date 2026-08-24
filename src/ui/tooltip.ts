@@ -169,7 +169,7 @@ export class Tooltip {
         'desc',
         kind === 'hidden'
           ? 'Exists only in an open pull request. Enable that tier in options.'
-          : 'Not in the bundled dataset.',
+          : 'Not in the active database.',
       ),
     );
     entry.append(body);

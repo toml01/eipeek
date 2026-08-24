@@ -48,6 +48,12 @@ if (!existsSync(EXT)) {
   process.exit(1);
 }
 
+const results = [];
+const check = (name, pass, detail = '') => {
+  results.push({ name, pass, detail });
+  console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? `  -- ${detail}` : ''}`);
+};
+
 // Vite module-preload hints do not work across Chrome extension execution
 // worlds. In particular, a shared popup/options chunk triggers Chrome's
 // "cross-world extension resource mismatch" warning. Keep this assertion on
@@ -60,9 +66,8 @@ for (const file of ['popup.html', 'options.html']) {
   }
 }
 
-// data/eips.json is pretty in git, but WXT/Vite embeds a compact JSON string in
-// the production service worker. aliases.json is maintenance-only and must not
-// be copied into the extension at all.
+// data/eips.json is pretty in git, but runtime construction and Vite produce a
+// compact service worker. Review-only source files must not be copied at all.
 const builtBackground = await readFile(path.join(EXT, 'background.js'), 'utf8');
 const compactBackground = builtBackground.endsWith('\n')
   ? builtBackground.slice(0, -1)
@@ -84,6 +89,54 @@ if (aliasEntries.some(({ reason }) => reason && builtBackground.includes(reason)
   process.exit(1);
 }
 
+const manifest = JSON.parse(await readFile(path.join(EXT, 'manifest.json'), 'utf8'));
+check(
+  'manifest keeps storage as its only optional permission',
+  JSON.stringify(manifest.permissions) === JSON.stringify(['storage']),
+  JSON.stringify(manifest.permissions),
+);
+check(
+  'manifest requires the storage access-level trust boundary',
+  Number(manifest.minimum_chrome_version) >= 102,
+  String(manifest.minimum_chrome_version),
+);
+check(
+  'manifest adds no host, tabs, alarms, or web-accessible-resource permission',
+  !Object.hasOwn(manifest, 'host_permissions') &&
+    !manifest.permissions?.includes('tabs') &&
+    !manifest.permissions?.includes('alarms') &&
+    !Object.hasOwn(manifest, 'web_accessible_resources'),
+);
+const forbiddenDatabaseOutputs = new Set([
+  'aliases.json',
+  'database.signed.json',
+  'database.payload.json',
+  'database-public-key.json',
+  'database-version.json',
+]);
+check(
+  'signed/review/private database files are absent from extension output',
+  !shippedFiles.some((file) =>
+    forbiddenDatabaseOutputs.has(path.basename(file)) ||
+    path.basename(file).endsWith('.pem') ||
+    file.split(path.sep).includes('.secrets'),
+  ),
+);
+const fixedDatabaseUrl =
+  'https://api.github.com/repos/toml01/eipeek/contents/data/database.signed.json?ref=main';
+check(
+  'background contains exactly the compile-time fixed database endpoint',
+  builtBackground.split(fixedDatabaseUrl).length === 2,
+);
+check(
+  'background contains no private signing key',
+  !builtBackground.includes('BEGIN PRIVATE KEY') && !builtBackground.includes('BEGIN EC PRIVATE KEY'),
+);
+const signedDatabaseArtifact = await readFile(
+  path.resolve(HERE, '../../data/database.signed.json'),
+  'utf8',
+);
+
 // Serve the fixture over http: content scripts do not run on file:// URLs
 // unless the extension is granted file access.
 const fixture = await readFile(path.join(HERE, 'fixture.html'), 'utf8');
@@ -93,12 +146,6 @@ const server = createServer((_req, res) => {
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const URL = `http://127.0.0.1:${server.address().port}/`;
-
-const results = [];
-const check = (name, pass, detail = '') => {
-  results.push({ name, pass, detail });
-  console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? `  -- ${detail}` : ''}`);
-};
 
 console.log(`browser: ${BROWSER}\nfixture: ${URL}\n`);
 
@@ -115,7 +162,11 @@ const COMMON_ARGS = [
   '--no-first-run',
   '--no-default-browser-check',
   '--disable-search-engine-choice-screen',
+  // Opt-in for locked-down containers that disable both user namespaces and
+  // Chrome's setuid sandbox. Normal development/CI keeps the sandbox enabled.
+  ...(process.env.EIPEEK_E2E_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
 ];
+const HEADLESS = process.env.EIPEEK_E2E_HEADLESS === '1';
 
 /**
  * Loads the unpacked extension, coping with the fact that there are now two
@@ -134,7 +185,7 @@ async function launchWithExtension() {
   try {
     const browser = await puppeteer.launch({
       executablePath: BROWSER,
-      headless: false,
+      headless: HEADLESS,
       userDataDir: profile,
       // Extensions.loadUnpacked is only exposed over a pipe connection.
       pipe: true,
@@ -150,7 +201,7 @@ async function launchWithExtension() {
     console.log('falling back to --load-extension');
     return puppeteer.launch({
       executablePath: BROWSER,
-      headless: false,
+      headless: HEADLESS,
       userDataDir: `${profile}-legacy`,
       enableExtensions: true,
       args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, ...COMMON_ARGS],
@@ -183,12 +234,54 @@ try {
   // shadows the global one in this module.
   const extensionId = /^chrome-extension:\/\/([a-z]+)\//.exec(worker.url())?.[1];
 
+  // Observe the service worker before opening any extension page or fixture.
+  // The only matching request must be the one released after the explicit
+  // Check button click below.
+  const workerCdp = await worker.createCDPSession();
+  await workerCdp.send('Network.enable');
+  const databaseNetworkRequests = [];
+  workerCdp.on('Network.requestWillBeSent', ({ request }) => {
+    if (request.url.includes('/data/database.signed.json')) {
+      databaseNetworkRequests.push({ url: request.url, method: request.method, headers: request.headers });
+    }
+  });
+
   // --- Extension pages: feedback opens the repository issue form --------
   const feedbackIssueUrl = 'https://github.com/toml01/eipeek/issues/new?template=feedback.yml';
   for (const extensionPage of ['popup.html', 'options.html']) {
     const extensionPageTab = await browser.newPage();
     await extensionPageTab.goto(`chrome-extension://${extensionId}/${extensionPage}`);
     await extensionPageTab.waitForSelector('[data-testid="feedback-link"]');
+    await extensionPageTab.waitForSelector('#databaseSection[aria-busy="false"]');
+    const databaseUi = await extensionPageTab.evaluate(() => ({
+      heading: document.querySelector('#database-heading')?.textContent?.trim(),
+      source: document.querySelector('#databaseSource')?.textContent?.trim(),
+      version: document.querySelector('#databaseVersion')?.textContent?.trim(),
+      lastCheck: document.querySelector('#databaseLastCheck')?.textContent?.trim(),
+      checkText: document.querySelector('[data-testid="database-check"]')?.textContent?.trim(),
+      checkDisabled: document.querySelector('[data-testid="database-check"]')?.disabled,
+      restoreText: document.querySelector('[data-testid="database-restore"]')?.textContent?.trim(),
+      restoreDisabled: document.querySelector('[data-testid="database-restore"]')?.disabled,
+      messageRole: document.querySelector('[data-testid="database-message"]')?.getAttribute('role'),
+      messageLive: document.querySelector('[data-testid="database-message"]')?.getAttribute('aria-live'),
+    }));
+    check(
+      `${extensionPage} shows bundled database status and both manual actions`,
+      databaseUi.heading === 'Database' &&
+        databaseUi.source === 'Bundled fallback' &&
+        databaseUi.version === '2026082402' &&
+        databaseUi.lastCheck === 'Never' &&
+        databaseUi.checkText === 'Check for updates' &&
+        databaseUi.checkDisabled === false &&
+        databaseUi.restoreText === 'Restore bundled database' &&
+        databaseUi.restoreDisabled === true,
+      JSON.stringify(databaseUi),
+    );
+    check(
+      `${extensionPage} database action state is an accessible live region`,
+      databaseUi.messageRole === 'status' && databaseUi.messageLive === 'polite',
+      `${databaseUi.messageRole} ${databaseUi.messageLive}`,
+    );
     const feedbackLink = await extensionPageTab.$eval('[data-testid="feedback-link"]', (link) => ({
       href: link.href,
       target: link.target,
@@ -247,6 +340,18 @@ try {
 
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 900 });
+  const pageCdp = await page.createCDPSession();
+  const executionContexts = new Map();
+  pageCdp.on('Runtime.executionContextCreated', ({ context }) => {
+    executionContexts.set(context.id, context);
+  });
+  pageCdp.on('Runtime.executionContextDestroyed', ({ executionContextId }) => {
+    executionContexts.delete(executionContextId);
+  });
+  pageCdp.on('Runtime.executionContextsCleared', () => {
+    executionContexts.clear();
+  });
+  await pageCdp.send('Runtime.enable');
 
   // Capture the pristine DOM before the content script runs.
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
@@ -267,6 +372,57 @@ try {
     console.error('FATAL: no highlights registered after 20s -- the content script did not run.');
     process.exit(1);
   }
+
+  const findContentContext = () =>
+    [...executionContexts.values()].find(
+      (context) =>
+        (context.origin === `chrome-extension://${extensionId}` ||
+          context.name?.includes(extensionId)) &&
+        context.auxData?.type === 'isolated',
+    );
+  const contentContext = await waitFor(findContentContext, 8000, 100);
+  const evaluateInContentContext = async (expression) => {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      const currentContentContext = findContentContext();
+      if (currentContentContext) {
+        try {
+          const result = await pageCdp.send('Runtime.evaluate', {
+            contextId: currentContentContext.id,
+            expression,
+            returnByValue: true,
+            awaitPromise: true,
+          });
+          if (!result.exceptionDetails) return result.result.value;
+        } catch (error) {
+          if (!/Cannot find context|Execution context was destroyed/.test(error?.message)) throw error;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return undefined;
+  };
+  const storageListenerInstalled = await evaluateInContentContext(`(() => {
+    globalThis.__eipeekDatabaseStorageEvents = [];
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      globalThis.__eipeekDatabaseStorageEvents.push({
+        areaName,
+        keys: Object.keys(changes).sort(),
+        bytes: new TextEncoder().encode(JSON.stringify(changes)).byteLength,
+      });
+    });
+    return true;
+  })()`);
+  check(
+    'real content-script world can observe the activation channel for the storage boundary test',
+    storageListenerInstalled === true,
+    contentContext ? JSON.stringify({ origin: contentContext.origin, name: contentContext.name }) : 'no context',
+  );
+  check(
+    'startup, status rendering, and page scanning make no database request',
+    databaseNetworkRequests.length === 0,
+    JSON.stringify(databaseNetworkRequests),
+  );
 
   // --- 1. the APIs this design depends on -------------------------------
   const api = await page.evaluate(() => ({
@@ -530,6 +686,249 @@ try {
       tooltipFeedbackLink.rel?.includes('noreferrer'),
     JSON.stringify(tooltipFeedbackLink),
   );
+  check(
+    'tooltip contains no database source, version, or update indicator',
+    !shadowText.includes('Bundled fallback') &&
+      !shadowText.includes('Downloaded and signature-verified') &&
+      !shadowText.includes('Check for updates') &&
+      !shadowText.includes('2026082402'),
+  );
+
+  // --- 6b. explicit, fixed-URL database actions -------------------------
+  // Intercept the one compile-time endpoint in the worker itself. This proves
+  // the real browser flow without relying on GitHub or whatever happens to be
+  // on main while this feature branch is under test.
+  const interceptedDatabaseRequests = [];
+  let nextResponseBody = signedDatabaseArtifact;
+  let releaseResponse = () => {};
+  let responseGate = new Promise((resolve) => {
+    releaseResponse = resolve;
+  });
+  let nextPaused;
+  const onDatabaseRequestPaused = async (event) => {
+    if (event.request.url !== fixedDatabaseUrl) {
+      await workerCdp.send('Fetch.continueRequest', { requestId: event.requestId });
+      return;
+    }
+    const body = nextResponseBody;
+    const gate = responseGate;
+    const notify = nextPaused;
+    nextPaused = undefined;
+    interceptedDatabaseRequests.push({
+      url: event.request.url,
+      method: event.request.method,
+      headers: event.request.headers,
+    });
+    notify?.(interceptedDatabaseRequests.at(-1));
+    await gate;
+    await workerCdp.send('Fetch.fulfillRequest', {
+      requestId: event.requestId,
+      responseCode: 200,
+      responseHeaders: [
+        { name: 'Content-Type', value: 'application/vnd.github.raw+json' },
+        { name: 'Access-Control-Allow-Origin', value: '*' },
+        { name: 'Cache-Control', value: 'no-store' },
+      ],
+      body: Buffer.from(body).toString('base64'),
+    });
+  };
+  workerCdp.on('Fetch.requestPaused', onDatabaseRequestPaused);
+  await workerCdp.send('Fetch.enable', {
+    patterns: [
+      {
+        urlPattern:
+          'https://api.github.com/repos/toml01/eipeek/contents/data/database.signed.json*',
+        requestStage: 'Request',
+      },
+    ],
+  });
+
+  const updateTab = await browser.newPage();
+  await updateTab.goto(`chrome-extension://${extensionId}/options.html`);
+  await updateTab.waitForSelector('#databaseSection[aria-busy="false"]');
+  const concurrentStatusTab = await browser.newPage();
+  await concurrentStatusTab.goto(`chrome-extension://${extensionId}/popup.html`);
+  await concurrentStatusTab.waitForSelector('#databaseSection[aria-busy="false"]');
+  const firstPaused = new Promise((resolve) => {
+    nextPaused = resolve;
+  });
+  await updateTab.$eval('[data-testid="database-check"]', (button) => button.click());
+  const firstRequest = await Promise.race([
+    firstPaused,
+    new Promise((resolve) => setTimeout(() => resolve(undefined), 8000)),
+  ]);
+  const busyUi = await updateTab.evaluate(() => ({
+    busy: document.querySelector('#databaseSection')?.getAttribute('aria-busy'),
+    checkDisabled: document.querySelector('[data-testid="database-check"]')?.disabled,
+    restoreDisabled: document.querySelector('[data-testid="database-restore"]')?.disabled,
+    message: document.querySelector('[data-testid="database-message"]')?.textContent?.trim(),
+    role: document.querySelector('[data-testid="database-message"]')?.getAttribute('role'),
+  }));
+  check(
+    'Check click exposes an accessible busy state while the request is in flight',
+    busyUi.busy === 'true' &&
+      busyUi.checkDisabled === true &&
+      busyUi.restoreDisabled === true &&
+      busyUi.message === 'Checking GitHub for a signed database…' &&
+      busyUi.role === 'status',
+    JSON.stringify(busyUi),
+  );
+  releaseResponse();
+
+  const updateSuccess = await waitFor(
+    () =>
+      updateTab
+        .$eval('[data-testid="database-message"]', (node) =>
+          node.textContent?.includes('Verified and activated database') ? node.textContent : undefined,
+        )
+        .catch(() => undefined),
+    15000,
+    100,
+  );
+  const activatedUi = await updateTab.evaluate(() => ({
+    source: document.querySelector('#databaseSource')?.textContent?.trim(),
+    version: document.querySelector('#databaseVersion')?.textContent?.trim(),
+    restoreDisabled: document.querySelector('[data-testid="database-restore"]')?.disabled,
+    role: document.querySelector('[data-testid="database-message"]')?.getAttribute('role'),
+  }));
+  check(
+    'valid signed response activates through the real settings UI',
+    !!updateSuccess &&
+      activatedUi.source === 'Downloaded and signature-verified' &&
+      activatedUi.version === '2026082402' &&
+      activatedUi.restoreDisabled === false &&
+      activatedUi.role === 'status',
+    JSON.stringify({ updateSuccess, activatedUi }),
+  );
+  const concurrentActivatedUi = await waitFor(
+    () =>
+      concurrentStatusTab
+        .evaluate(() => {
+          const source = document.querySelector('#databaseSource')?.textContent?.trim();
+          const version = document.querySelector('#databaseVersion')?.textContent?.trim();
+          const restoreDisabled = document.querySelector('[data-testid="database-restore"]')?.disabled;
+          return source === 'Downloaded and signature-verified'
+            ? { source, version, restoreDisabled }
+            : undefined;
+        })
+        .catch(() => undefined),
+    8000,
+    100,
+  );
+  check(
+    'concurrently open settings surface refreshes after activation',
+    concurrentActivatedUi?.version === '2026082402' && concurrentActivatedUi.restoreDisabled === false,
+    JSON.stringify(concurrentActivatedUi),
+  );
+  const contentStorageEvents = await evaluateInContentContext(
+    'structuredClone(globalThis.__eipeekDatabaseStorageEvents)',
+  );
+  check(
+    'content listener receives only the small session activation signal, never local artifact changes',
+    Array.isArray(contentStorageEvents) &&
+      contentStorageEvents.length === 1 &&
+      contentStorageEvents[0].areaName === 'session' &&
+      JSON.stringify(contentStorageEvents[0].keys) ===
+        JSON.stringify(['eipeek.database.activation.v1']) &&
+      contentStorageEvents[0].bytes < 256,
+    JSON.stringify(contentStorageEvents),
+  );
+  const requestHeaders = Object.fromEntries(
+    Object.entries(firstRequest?.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]),
+  );
+  check(
+    'manual check uses only the fixed raw Contents request without credentials',
+    firstRequest?.url === fixedDatabaseUrl &&
+      firstRequest?.method === 'GET' &&
+      requestHeaders.accept === 'application/vnd.github.raw+json' &&
+      !requestHeaders.authorization &&
+      !requestHeaders.cookie,
+    JSON.stringify(firstRequest),
+  );
+  await waitFor(async () => !(await tooltipVisible()), 6000, 100);
+  check('database activation hides an open tooltip', !(await tooltipVisible()));
+
+  const requestsBeforeRestore = interceptedDatabaseRequests.length;
+  await updateTab.$eval('[data-testid="database-restore"]', (button) => button.click());
+  const restoreSuccess = await waitFor(
+    () =>
+      updateTab
+        .$eval('[data-testid="database-message"]', (node) =>
+          node.textContent?.includes('Restored bundled database') ? node.textContent : undefined,
+        )
+        .catch(() => undefined),
+    8000,
+    100,
+  );
+  const restoredUi = await updateTab.evaluate(() => ({
+    source: document.querySelector('#databaseSource')?.textContent?.trim(),
+    restoreDisabled: document.querySelector('[data-testid="database-restore"]')?.disabled,
+  }));
+  check(
+    'Restore selects bundled data without making a request',
+    !!restoreSuccess &&
+      restoredUi.source === 'Bundled fallback' &&
+      restoredUi.restoreDisabled === true &&
+      interceptedDatabaseRequests.length === requestsBeforeRestore,
+    JSON.stringify({ restoreSuccess, restoredUi, requests: interceptedDatabaseRequests.length }),
+  );
+  const concurrentRestoredUi = await waitFor(
+    () =>
+      concurrentStatusTab
+        .$eval('#databaseSource', (node) =>
+          node.textContent?.trim() === 'Bundled fallback' ? node.textContent.trim() : undefined,
+        )
+        .catch(() => undefined),
+    8000,
+    100,
+  );
+  check(
+    'concurrently open settings surface refreshes after restore',
+    concurrentRestoredUi === 'Bundled fallback',
+    concurrentRestoredUi,
+  );
+
+  // A safely mocked malformed response exercises the visible error state and
+  // verifies that failure cannot dislodge the restored bundled fallback.
+  nextResponseBody = '{"not":"a signed database"}\n';
+  responseGate = Promise.resolve();
+  const invalidPaused = new Promise((resolve) => {
+    nextPaused = resolve;
+  });
+  await updateTab.$eval('[data-testid="database-check"]', (button) => button.click());
+  await Promise.race([
+    invalidPaused,
+    new Promise((resolve) => setTimeout(() => resolve(undefined), 8000)),
+  ]);
+  const updateError = await waitFor(
+    () =>
+      updateTab
+        .$eval('[data-testid="database-message"]', (node) =>
+          node.getAttribute('role') === 'alert' && node.textContent?.trim()
+            ? { message: node.textContent.trim(), role: node.getAttribute('role') }
+            : undefined,
+        )
+        .catch(() => undefined),
+    8000,
+    100,
+  );
+  const failedUiSource = await updateTab.$eval('#databaseSource', (node) => node.textContent?.trim());
+  check(
+    'invalid update reports an accessible error and leaves bundled data active',
+    updateError?.role === 'alert' && failedUiSource === 'Bundled fallback',
+    JSON.stringify({ updateError, failedUiSource }),
+  );
+  await workerCdp.send('Fetch.disable');
+  workerCdp.off('Fetch.requestPaused', onDatabaseRequestPaused);
+  await concurrentStatusTab.close();
+  await updateTab.close();
+  await page.bringToFront();
+  const rangesAfterRestore = await waitFor(
+    () => page.evaluate(() => CSS.highlights.get('eip-ref')?.size ?? 0),
+    6000,
+    100,
+  );
+  check('activation and restore rescan without losing highlights', rangesAfterRestore > 0);
 
   await hoverIn('#scheduled-upgrade');
   const scheduledUpgradeText = await waitForTooltip('ETH transfers emit a log');
@@ -720,11 +1119,16 @@ try {
   await setSetting({ debugMode: true });
 
   if (await selectText('#debug-miss', '9998')) {
-    const t = await waitForTooltip('Not in the bundled dataset');
+    const t = await waitForTooltip('Not in the active database');
     console.log(`      tooltip: ${summarize(t)}`);
     check(
       'debug mode reports an unknown number',
-      t.includes('EIP-9998') && t.includes('Not in the bundled dataset'),
+      t.includes('EIP-9998') &&
+        t.includes('Not in the active database') &&
+        !t.includes('Bundled fallback') &&
+        !t.includes('Downloaded and signature-verified') &&
+        !t.includes('Check for updates') &&
+        !t.includes('2026082402'),
     );
   } else {
     check('debug mode reports an unknown number', false, 'could not select');

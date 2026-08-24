@@ -18,6 +18,8 @@
     "data:build": "tsx scripts/build-dataset.ts",
     "data:maintain": "tsx scripts/maintain-dataset.ts",
     "data:review": "tsx scripts/review-dataset.ts",
+    "data:sign": "tsx scripts/sign-database.ts",
+    "data:verify": "tsx scripts/verify-database.ts",
     "postinstall": "wxt prepare"
   },
   "devDependencies": {

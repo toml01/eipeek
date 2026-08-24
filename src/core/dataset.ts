@@ -1,5 +1,12 @@
 import { browser } from 'wxt/browser';
 import { UNMERGED_NUMBERS, VALID_NUMBERS } from './numbers.generated';
+import {
+  isDatabaseActivationChange,
+  type DatabaseIndexRequest,
+  type DatabaseIndexResponse,
+  type DatabaseLookupResponse,
+} from './database-messages';
+import { DatasetRuntime, type NumberKind } from './dataset-runtime';
 import type { Proposal } from './types';
 
 /**
@@ -8,16 +15,14 @@ import type { Proposal } from './types';
  * the metadata payload is only requested once a page actually yields a confirmed
  * match -- and then only for the numbers on that page.
  */
-const merged = new Set<number>(VALID_NUMBERS);
-const unmerged = new Set<number>(UNMERGED_NUMBERS);
+const runtime = new DatasetRuntime(VALID_NUMBERS, UNMERGED_NUMBERS);
 
 /**
  * Builds the predicate the matcher uses. Splitting the index by tier means the
  * "include open PRs" setting costs nothing at match time.
  */
 export function numberValidator(includeUnmerged: boolean): (n: number) => boolean {
-  if (!includeUnmerged) return (n) => merged.has(n);
-  return (n) => merged.has(n) || unmerged.has(n);
+  return runtime.numberValidator(includeUnmerged);
 }
 
 /**
@@ -25,27 +30,11 @@ export function numberValidator(includeUnmerged: boolean): (n: number) => boolea
  * proposal exists but only in an open pull request, and the user has that tier
  * switched off -- worth saying so rather than claiming it does not exist.
  */
-export type NumberKind = 'merged' | 'unmerged' | 'hidden' | 'unknown';
+export type { NumberKind } from './dataset-runtime';
 
 export function classify(n: number, includeUnmerged: boolean): NumberKind {
-  if (merged.has(n)) return 'merged';
-  if (unmerged.has(n)) return includeUnmerged ? 'unmerged' : 'hidden';
-  return 'unknown';
+  return runtime.classify(n, includeUnmerged);
 }
-
-export interface LookupRequest {
-  type: 'lookup';
-  numbers: number[];
-}
-
-/**
- * A number can resolve to several proposals: rival open PRs sometimes claim the
- * same number before an editor assigns it.
- */
-export type LookupResponse = Record<number, Proposal[]>;
-
-/** Per-page cache, so a rescan after a DOM mutation costs nothing. */
-const cache = new Map<number, Proposal[]>();
 
 /**
  * Resolves metadata via the background worker, which holds the bundled JSON.
@@ -53,28 +42,37 @@ const cache = new Map<number, Proposal[]>();
  * no fetchable extension URL to probe for.
  */
 export async function lookup(numbers: number[]): Promise<Map<number, Proposal[]>> {
-  const missing = numbers.filter((n) => !cache.has(n));
-  if (missing.length > 0) {
-    try {
-      const res = (await browser.runtime.sendMessage({
-        type: 'lookup',
-        numbers: missing,
-      } satisfies LookupRequest)) as LookupResponse | undefined;
-      for (const [key, list] of Object.entries(res ?? {})) {
-        cache.set(Number(key), list);
-      }
-      // Remember misses too, so a number with no metadata is not re-requested on
-      // every rescan.
-      for (const n of missing) if (!cache.has(n)) cache.set(n, []);
-    } catch {
-      // Worker asleep or extension reloading; the caller renders nothing and the
-      // next hover retries.
-    }
+  return runtime.lookup(numbers, async (request) =>
+    (await browser.runtime.sendMessage(request)) as DatabaseLookupResponse | undefined,
+  );
+}
+
+let refreshSequence = 0;
+
+/** Loads the active signed precomputed index; failure leaves the bundled index intact. */
+export async function refreshDatabaseIndex(): Promise<boolean> {
+  const sequence = ++refreshSequence;
+  try {
+    const response = (await browser.runtime.sendMessage({
+      type: 'database.getIndex',
+    } satisfies DatabaseIndexRequest)) as DatabaseIndexResponse | undefined;
+    if (sequence !== refreshSequence || !response) return false;
+    return runtime.activateIndex(response);
+  } catch {
+    return false;
   }
-  const out = new Map<number, Proposal[]>();
-  for (const n of numbers) {
-    const list = cache.get(n);
-    if (list?.length) out.set(n, list);
-  }
-  return out;
+}
+
+/**
+ * storage.session is the no-tabs-permission activation signal. The listener asks
+ * the worker for the small number arrays; it never exposes the large artifact to
+ * the page world.
+ */
+export function onDatabaseActivated(fn: () => void): void {
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (!isDatabaseActivationChange(changes, area)) return;
+    void refreshDatabaseIndex().then((changed) => {
+      if (changed) fn();
+    });
+  });
 }
