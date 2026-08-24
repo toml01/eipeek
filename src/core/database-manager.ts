@@ -7,20 +7,23 @@ import {
 } from './database-artifact';
 import {
   type DatabaseActivationSignal,
-  type DatabaseActionResponse,
   type DatabaseCheckOutcome,
   type DatabaseIndexResponse,
   type DatabaseLookupResponse,
   type DatabaseSource,
-  type DatabaseStatus,
+  type DatabaseManagerActionResponse,
+  type DatabaseManagerStatus,
 } from './database-messages';
 import type { Proposal } from './types';
 
-/** The only runtime update location. It is compile-time fixed and accepts no input. */
+/** The only runtime update locations. They are compile-time fixed and accept no input. */
 export const DATABASE_UPDATE_URL =
   'https://api.github.com/repos/toml01/eipeek/contents/data/database.signed.json?ref=main';
+export const DATABASE_VERSION_HINT_URL =
+  'https://api.github.com/repos/toml01/eipeek/contents/data/database-version.json?ref=main';
 export const DATABASE_UPDATE_ACCEPT = 'application/vnd.github.raw+json';
 export const DATABASE_UPDATE_TIMEOUT_MS = 15_000;
+export const MAX_DATABASE_VERSION_HINT_BYTES = 4 * 1_024;
 
 const DATABASE_STATUS_STORAGE_KEY = 'eipeek.database.status.v1';
 /** Trusted-context-only persistent pointer; never use this as a content-script signal. */
@@ -82,6 +85,7 @@ export interface DatabaseManagerOptions {
   now?: () => Date;
   timeoutMs?: number;
   notifyActivation?: (signal: DatabaseActivationSignal) => Promise<void>;
+  notifyStatusChange?: () => Promise<void>;
 }
 
 export type DatabaseManagerErrorCode =
@@ -90,6 +94,9 @@ export type DatabaseManagerErrorCode =
   | 'timeout'
   | 'http'
   | 'artifact-too-large'
+  | 'hint-too-large'
+  | 'invalid-hint'
+  | 'hint-mismatch'
   | 'invalid-envelope'
   | 'invalid-signature'
   | 'invalid-schema'
@@ -122,6 +129,7 @@ export class DatabaseManager {
   private readonly now: () => Date;
   private readonly timeoutMs: number;
   private readonly notifyActivation: (signal: DatabaseActivationSignal) => Promise<void>;
+  private readonly notifyStatusChange: () => Promise<void>;
   private ready: Promise<void> | null = null;
   /** False until a successful local read establishes the durable rollback floor. */
   private durableStateKnown = false;
@@ -145,6 +153,7 @@ export class DatabaseManager {
     this.now = options.now ?? (() => new Date());
     this.timeoutMs = options.timeoutMs ?? DATABASE_UPDATE_TIMEOUT_MS;
     this.notifyActivation = options.notifyActivation ?? (async () => {});
+    this.notifyStatusChange = options.notifyStatusChange ?? (async () => {});
     this.state = this.defaultState();
     this.active = this.bundledActive(this.state.revision, null);
   }
@@ -168,7 +177,7 @@ export class DatabaseManager {
     return this.ready;
   }
 
-  async status(): Promise<DatabaseStatus> {
+  async status(): Promise<DatabaseManagerStatus> {
     await this.initialize();
     return this.currentStatus();
   }
@@ -196,17 +205,34 @@ export class DatabaseManager {
     return { revision: snapshot.revision, proposals };
   }
 
-  async checkForUpdates(): Promise<DatabaseActionResponse> {
+  async checkForUpdates(trigger: 'manual' | 'automatic' = 'manual'): Promise<DatabaseManagerActionResponse> {
     await this.initialize();
     this.requireDurableState();
     if (this.busy) throw new DatabaseManagerError('busy', 'Another database action is already running.');
     this.busy = true;
-    let outcome: DatabaseActionResponse['outcome'];
+    let outcome: DatabaseManagerActionResponse['outcome'];
     let message: string;
     try {
+      let hintVersion: number | null = null;
+      if (trigger === 'automatic') {
+        hintVersion = await this.downloadVersionHint();
+        if (hintVersion <= this.state.highWaterVersion) {
+          outcome = 'current';
+          message = `Automatic check found no version newer than ${this.state.highWaterVersion}.`;
+          await this.recordCheck('current', message);
+          return { ok: true, outcome, message, status: this.currentStatus(false) };
+        }
+      }
+
       const rawArtifact = await this.downloadArtifact();
       const verified = await this.verify(rawArtifact);
       this.enforceMonotonicVersion(verified);
+      if (hintVersion !== null && verified.payload.databaseVersion !== hintVersion) {
+        throw new DatabaseManagerError(
+          'hint-mismatch',
+          `Rejected database ${verified.payload.databaseVersion}: the version hint announced ${hintVersion}.`,
+        );
+      }
 
       if (
         this.active.source === 'downloaded' &&
@@ -227,11 +253,12 @@ export class DatabaseManager {
       throw normalized;
     } finally {
       this.busy = false;
+      await this.publishStatusChange();
     }
     return { ok: true, outcome, message, status: this.currentStatus() };
   }
 
-  async restoreBundled(): Promise<DatabaseActionResponse> {
+  async restoreBundled(): Promise<DatabaseManagerActionResponse> {
     await this.initialize();
     this.requireDurableState();
     if (this.busy) throw new DatabaseManagerError('busy', 'Another database action is already running.');
@@ -272,6 +299,7 @@ export class DatabaseManager {
       };
     } finally {
       this.busy = false;
+      await this.publishStatusChange();
     }
   }
 
@@ -499,6 +527,50 @@ export class DatabaseManager {
   }
 
   private async downloadArtifact(): Promise<string> {
+    return this.downloadFixedFile(
+      DATABASE_UPDATE_URL,
+      MAX_DATABASE_ARTIFACT_BYTES,
+      'artifact-too-large',
+      'The downloaded database file is too large.',
+      'database',
+    );
+  }
+
+  private async downloadVersionHint(): Promise<number> {
+    const raw = await this.downloadFixedFile(
+      DATABASE_VERSION_HINT_URL,
+      MAX_DATABASE_VERSION_HINT_BYTES,
+      'hint-too-large',
+      'The GitHub database version hint is too large.',
+      'version hint',
+    );
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new DatabaseManagerError('invalid-hint', 'GitHub returned an invalid database version hint.');
+    }
+    if (!exactObject(value, ['schemaVersion', 'databaseVersion', 'keyId'])) {
+      throw new DatabaseManagerError('invalid-hint', 'GitHub returned an invalid database version hint.');
+    }
+    const hint = value as Record<string, unknown>;
+    if (
+      hint.schemaVersion !== 1 ||
+      !positiveSafeInteger(hint.databaseVersion) ||
+      hint.keyId !== this.bundledPayload.keyId
+    ) {
+      throw new DatabaseManagerError('invalid-hint', 'GitHub returned an invalid database version hint.');
+    }
+    return hint.databaseVersion;
+  }
+
+  private async downloadFixedFile(
+    url: string,
+    maximumBytes: number,
+    tooLargeCode: 'artifact-too-large' | 'hint-too-large',
+    tooLargeMessage: string,
+    requestName: string,
+  ): Promise<string> {
     const controller = new AbortController();
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -506,7 +578,7 @@ export class DatabaseManager {
       controller.abort();
     }, this.timeoutMs);
     try {
-      const response = await this.fetcher(DATABASE_UPDATE_URL, {
+      const response = await this.fetcher(url, {
         method: 'GET',
         headers: { Accept: DATABASE_UPDATE_ACCEPT },
         credentials: 'omit',
@@ -519,11 +591,11 @@ export class DatabaseManager {
       if (!response.ok) {
         throw new DatabaseManagerError('http', `GitHub returned HTTP ${response.status}.`);
       }
-      return await readLimitedUtf8(response, MAX_DATABASE_ARTIFACT_BYTES);
+      return await readLimitedUtf8(response, maximumBytes, tooLargeCode, tooLargeMessage);
     } catch (error) {
       if (error instanceof DatabaseManagerError) throw error;
-      if (timedOut) throw new DatabaseManagerError('timeout', 'The GitHub database request timed out.');
-      throw new DatabaseManagerError('network', 'Could not download the database from GitHub.');
+      if (timedOut) throw new DatabaseManagerError('timeout', `The GitHub ${requestName} request timed out.`);
+      throw new DatabaseManagerError('network', `Could not download the database ${requestName} from GitHub.`);
     } finally {
       clearTimeout(timer);
     }
@@ -574,6 +646,15 @@ export class DatabaseManager {
     }
   }
 
+  private async publishStatusChange(): Promise<void> {
+    try {
+      await this.notifyStatusChange();
+    } catch {
+      // Status remains durable in local storage. This signal is only an
+      // opportunistic refresh for concurrently open extension pages.
+    }
+  }
+
   private bundledActive(revision: number, activatedAt: string | null): ActiveDatabase {
     return {
       source: 'bundled',
@@ -600,7 +681,7 @@ export class DatabaseManager {
     };
   }
 
-  private currentStatus(forceBusy = this.busy): DatabaseStatus {
+  private currentStatus(forceBusy = this.busy): DatabaseManagerStatus {
     return {
       source: this.active.source,
       activeVersion: this.active.payload.databaseVersion,
@@ -624,10 +705,15 @@ export class DatabaseManager {
   }
 }
 
-async function readLimitedUtf8(response: Response, maximumBytes: number): Promise<string> {
+async function readLimitedUtf8(
+  response: Response,
+  maximumBytes: number,
+  tooLargeCode: 'artifact-too-large' | 'hint-too-large' = 'artifact-too-large',
+  tooLargeMessage = 'The downloaded database file is too large.',
+): Promise<string> {
   const length = response.headers.get('content-length');
   if (length !== null && Number(length) > maximumBytes) {
-    throw new DatabaseManagerError('artifact-too-large', 'The downloaded database file is too large.');
+    throw new DatabaseManagerError(tooLargeCode, tooLargeMessage);
   }
   if (!response.body) throw new DatabaseManagerError('network', 'GitHub returned an empty database response.');
 
@@ -641,7 +727,7 @@ async function readLimitedUtf8(response: Response, maximumBytes: number): Promis
     total += value.byteLength;
     if (total > maximumBytes) {
       await reader.cancel();
-      throw new DatabaseManagerError('artifact-too-large', 'The downloaded database file is too large.');
+      throw new DatabaseManagerError(tooLargeCode, tooLargeMessage);
     }
     chunks.push(value);
   }

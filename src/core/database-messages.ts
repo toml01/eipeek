@@ -2,6 +2,8 @@ import type { Proposal } from './types';
 
 /** Small revision-only signal exposed to content scripts through storage.session. */
 export const DATABASE_ACTIVATION_STORAGE_KEY = 'eipeek.database.activation.v1';
+/** Small refresh-only signal for open popup/options surfaces. */
+export const DATABASE_UI_CHANGE_STORAGE_KEY = 'eipeek.database.uiChange.v1';
 
 export interface DatabaseActivationSignal {
   revision: number;
@@ -25,7 +27,14 @@ export interface DatabaseStatus {
   lastCheckOutcome: DatabaseCheckOutcome | null;
   lastCheckMessage: string | null;
   busy: boolean;
+  autoUpdateEnabled: boolean;
+  nextScheduledCheckAt: string | null;
 }
+
+export type DatabaseManagerStatus = Omit<
+  DatabaseStatus,
+  'autoUpdateEnabled' | 'nextScheduledCheckAt'
+>;
 
 export interface DatabaseIndexResponse {
   revision: number;
@@ -51,6 +60,11 @@ export interface DatabaseRestoreRequest {
   type: 'database.restore';
 }
 
+export interface DatabaseSetAutoUpdateRequest {
+  type: 'database.setAutoUpdate';
+  enabled: boolean;
+}
+
 export interface DatabaseIndexRequest {
   type: 'database.getIndex';
 }
@@ -65,6 +79,7 @@ export type RuntimeRequest =
   | DatabaseStatusRequest
   | DatabaseCheckRequest
   | DatabaseRestoreRequest
+  | DatabaseSetAutoUpdateRequest
   | DatabaseIndexRequest
   | LookupRequest;
 
@@ -73,6 +88,10 @@ export interface DatabaseActionResponse {
   outcome: 'activated' | 'current' | 'restored';
   message: string;
   status: DatabaseStatus;
+}
+
+export interface DatabaseManagerActionResponse extends Omit<DatabaseActionResponse, 'status'> {
+  status: DatabaseManagerStatus;
 }
 
 export interface DatabaseStatusResponse {
@@ -88,6 +107,36 @@ export interface DatabaseErrorResponse {
 }
 
 export type DatabaseUiResponse = DatabaseActionResponse | DatabaseStatusResponse | DatabaseErrorResponse;
+
+export interface AutoUpdateToggleView {
+  checked: boolean;
+  nextCheck: 'Disabled' | 'Scheduling…' | 'scheduled';
+  applyReturnedStatus: boolean;
+}
+
+/**
+ * Preference is written before alarm create/clear. A failed reconciliation
+ * still returns that stored preference; the optimistic click is not source of
+ * truth. Revert the checkbox only when the worker omitted status.
+ */
+export function autoUpdateToggleView(
+  requestedEnabled: boolean,
+  response: DatabaseUiResponse | undefined,
+): AutoUpdateToggleView {
+  if (response?.status) {
+    const { autoUpdateEnabled, nextScheduledCheckAt } = response.status;
+    return {
+      checked: autoUpdateEnabled,
+      nextCheck: !autoUpdateEnabled ? 'Disabled' : nextScheduledCheckAt ? 'scheduled' : 'Scheduling…',
+      applyReturnedStatus: true,
+    };
+  }
+  return {
+    checked: !requestedEnabled,
+    nextCheck: requestedEnabled ? 'Disabled' : 'Scheduling…',
+    applyReturnedStatus: false,
+  };
+}
 
 /**
  * Narrows the global storage event to the one small cross-context signal. Local
@@ -108,6 +157,20 @@ export function isDatabaseActivationChange(
   );
 }
 
+export function isDatabaseUiChange(
+  changes: Record<string, { newValue?: unknown }>,
+  areaName: string,
+): boolean {
+  if (isDatabaseActivationChange(changes, areaName)) return true;
+  if (areaName !== 'session') return false;
+  const change = changes[DATABASE_UI_CHANGE_STORAGE_KEY];
+  if (!change || change.newValue === null || typeof change.newValue !== 'object') return false;
+  const signal = change.newValue as Record<string, unknown>;
+  return Object.keys(signal).length === 1 &&
+    Number.isSafeInteger(signal.revision) &&
+    (signal.revision as number) >= 0;
+}
+
 /** Rejects extra fields, including any attempt to supply a URL. */
 export function parseRuntimeRequest(value: unknown): RuntimeRequest | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -120,6 +183,11 @@ export function parseRuntimeRequest(value: unknown): RuntimeRequest | null {
     message.type === 'database.getIndex'
   ) {
     return Object.keys(message).length === 1 ? (message as unknown as RuntimeRequest) : null;
+  }
+  if (message.type === 'database.setAutoUpdate') {
+    return Object.keys(message).sort().join(',') === 'enabled,type' && typeof message.enabled === 'boolean'
+      ? (message as unknown as DatabaseSetAutoUpdateRequest)
+      : null;
   }
   if (message.type !== 'lookup' || Object.keys(message).sort().join(',') !== 'numbers,revision,type') {
     return null;
@@ -138,11 +206,13 @@ export function parseRuntimeRequest(value: unknown): RuntimeRequest | null {
 
 export function isDatabaseMutationRequest(
   request: RuntimeRequest,
-): request is DatabaseCheckRequest | DatabaseRestoreRequest {
-  return request.type === 'database.check' || request.type === 'database.restore';
+): request is DatabaseCheckRequest | DatabaseRestoreRequest | DatabaseSetAutoUpdateRequest {
+  return request.type === 'database.check' ||
+    request.type === 'database.restore' ||
+    request.type === 'database.setAutoUpdate';
 }
 
-/** Check/restore are privileged to popup/options pages, never page content scripts. */
+/** Database mutations are privileged to popup/options pages, never content scripts. */
 export function isExtensionPageSender(
   sender: { url?: string; tab?: unknown },
   extensionRoot: string,

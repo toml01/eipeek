@@ -45,7 +45,7 @@ export default defineConfig({
     minimum_chrome_version: '102',
     description:
       'Highlights EIP/ERC references on any page. Hover for the full title, status, and links to the spec, discussion, and source.',
-    permissions: ['storage'],
+    permissions: ['storage', 'alarms'],
     icons: ICONS,
     // Clicking the toolbar icon shows the settings inline. WXT derives
     // default_popup from the popup entrypoint on its own; this is here so the

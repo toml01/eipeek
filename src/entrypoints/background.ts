@@ -1,12 +1,19 @@
 import proposals from '../../data/eips.json';
 import { BUNDLED_DATABASE_PAYLOAD_SHA256, BUNDLED_DATABASE_VERSION } from '../core/database.generated';
-import { DatabaseManager, DatabaseManagerError } from '../core/database-manager';
+import { DatabaseManager } from '../core/database-manager';
+import {
+  DATABASE_AUTO_UPDATE_STORAGE_KEY,
+  DatabaseAlarmScheduler,
+  type DatabaseAlarm,
+} from '../core/database-alarm';
+import { DatabaseRuntime } from '../core/database-runtime';
 import { constructDatabasePayload } from '../core/database-payload';
 import { configureDatabaseStorageAccess } from '../core/database-storage-access';
 import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../core/numbers.generated';
 import type { Proposal } from '../core/types';
 import {
   DATABASE_ACTIVATION_STORAGE_KEY,
+  DATABASE_UI_CHANGE_STORAGE_KEY,
   isDatabaseMutationRequest,
   isExtensionPageSender,
   parseRuntimeRequest,
@@ -26,12 +33,27 @@ const chromeApi = (globalThis as typeof globalThis & {
           accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS';
         }): Promise<void>;
       };
+      sync: {
+        get(keys: string[]): Promise<Record<string, unknown>>;
+        set(values: Record<string, unknown>): Promise<void>;
+      };
       session?: {
         set(values: Record<string, unknown>): Promise<void>;
         setAccessLevel?(options: {
           accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS';
         }): Promise<void>;
       };
+      onChanged: {
+        addListener(
+          listener: (changes: Record<string, { newValue?: unknown }>, areaName: string) => void,
+        ): void;
+      };
+    };
+    alarms: {
+      get(name: string): Promise<DatabaseAlarm | undefined>;
+      create(name: string, info: { delayInMinutes: number; periodInMinutes: number }): void;
+      clear(name: string): Promise<boolean>;
+      onAlarm: { addListener(listener: (alarm: DatabaseAlarm) => void): void };
     };
     runtime: {
       getURL(path: string): string;
@@ -44,6 +66,8 @@ const chromeApi = (globalThis as typeof globalThis & {
           ) => boolean,
         ): void;
       };
+      onInstalled: { addListener(listener: () => void): void };
+      onStartup: { addListener(listener: () => void): void };
     };
   };
 }).chrome;
@@ -84,12 +108,51 @@ export default defineBackground(() => {
       }
       await chromeApi.storage.session.set({ [DATABASE_ACTIVATION_STORAGE_KEY]: signal });
     },
+    notifyStatusChange: publishUiChange,
+  });
+
+  let uiChangeRevision = Date.now();
+  async function publishUiChange() {
+    if (!(await storageAccess).session || !chromeApi.storage.session) {
+      throw new Error('untrusted session status channel unavailable');
+    }
+    uiChangeRevision = uiChangeRevision >= Number.MAX_SAFE_INTEGER ? Date.now() : uiChangeRevision + 1;
+    await chromeApi.storage.session.set({
+      [DATABASE_UI_CHANGE_STORAGE_KEY]: { revision: uiChangeRevision },
+    });
+  }
+
+  const scheduler = new DatabaseAlarmScheduler({
+    alarms: chromeApi.alarms,
+    storage: chromeApi.storage.sync,
+    notifyChange: publishUiChange,
+  });
+  const runtime = new DatabaseRuntime(manager, scheduler);
+
+  const reconcileSchedule = () => {
+    void runtime.reconcileSchedule().catch(() => {});
+  };
+
+  // Lifecycle and alarm listeners are registered synchronously at worker
+  // evaluation. Reconciliation only touches storage/alarms and never fetches.
+  chromeApi.alarms.onAlarm.addListener((alarm) => {
+    void scheduler.handleAlarm(alarm, () => manager.checkForUpdates('automatic')).catch(() => {});
+  });
+  chromeApi.runtime.onInstalled.addListener(reconcileSchedule);
+  chromeApi.runtime.onStartup.addListener(reconcileSchedule);
+  chromeApi.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'sync' && Object.hasOwn(changes, DATABASE_AUTO_UPDATE_STORAGE_KEY)) {
+      reconcileSchedule();
+    }
   });
 
   // Reverify persisted downloaded bytes after every worker start. Initialization
   // reads local storage only and never calls fetch; network is exclusive to the
-  // explicit database.check message below.
-  void manager.initialize().catch(() => {});
+  // manual check or delivery of the matching daily alarm below.
+  void Promise.all([
+    manager.initialize(),
+    runtime.reconcileSchedule(),
+  ]).catch(() => {});
 
   chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const request = parseRuntimeRequest(message);
@@ -114,31 +177,15 @@ export default defineBackground(() => {
         case 'database.getIndex':
           return manager.getNumberIndex();
         case 'database.status':
-          return { ok: true as const, status: await manager.status() };
         case 'database.check':
-          return manager.checkForUpdates();
         case 'database.restore':
-          return manager.restoreBundled();
+        case 'database.setAutoUpdate':
+          return runtime.handle(request);
       }
     };
 
     void respond().then(sendResponse, async (error: unknown) => {
-      const normalized =
-        error instanceof DatabaseManagerError
-          ? error
-          : new DatabaseManagerError('network', 'The database action failed.');
-      let status;
-      try {
-        status = await manager.status();
-      } catch {
-        // The action error remains useful even if status construction fails.
-      }
-      sendResponse({
-        ok: false,
-        code: normalized.code,
-        message: normalized.message,
-        ...(status ? { status } : {}),
-      } satisfies DatabaseErrorResponse);
+      sendResponse(await runtime.errorResponse(error));
     });
 
     // Chrome ignores a returned Promise from MV3 onMessage. Keep the channel

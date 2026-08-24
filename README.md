@@ -11,8 +11,9 @@ to the spec, forum discussion, and source.
 Covers **1195 merged proposals plus 218 that so far exist only in an open pull
 request**, across `ethereum/EIPs` and `ethereum/ERCs`, bundled with the extension.
 **No network requests are made while you browse** — the dataset is in the
-package, so the pages you read stay on your machine. Database checks are manual:
-GitHub is contacted only after you click **Check for updates** in settings.
+package, so the pages you read stay on your machine. An on-by-default daily
+background check contacts GitHub for a small database version hint; it can be
+disabled in settings. A manual **Check for updates** remains available.
 
 Have feedback? [Open a GitHub issue](https://github.com/toml01/eipeek/issues/new?template=feedback.yml)
 for bugs, database corrections, feature requests, or general comments.
@@ -315,19 +316,44 @@ The content script injected into every page is **~29 KB**. Metadata travels over
 `runtime.sendMessage` rather than `web_accessible_resources`, so there is no
 fetchable extension URL for a page to probe for.
 
-### Manual signed database updates
+### Signed database updates
 
-The popup and options page have a **Database** section. Nothing checks
-automatically: startup, page scans, highlighting, and tooltip lookups use local
-data only. Clicking **Check for updates** makes one credentialless request from
-the background worker to the compile-time fixed GitHub REST Contents endpoint:
+The popup and options page have a **Database** section. Automatic daily checks
+are on by default and can be disabled with **Update the database automatically
+each day**. The background worker uses a `chrome.alarms` alarm with a uniformly
+random first delay from 1 through 1440 minutes and an approximate 1440-minute
+period. Disabling the toggle clears the alarm; enabling it creates a new
+randomized schedule. Install/update, browser startup, and worker startup only
+reconcile that schedule and do not fetch. Page loads, scans, highlighting,
+tooltip lookups, status display, and database restore also never fetch.
+
+When the daily alarm fires, it first makes one credentialless request for a
+strictly parsed, maximum-4-KiB version hint at:
+
+`https://api.github.com/repos/toml01/eipeek/contents/data/database-version.json?ref=main`
+
+If that untrusted hint is not above the highest version already accepted, the
+check records success and stops. This preserves an explicit **Restore bundled
+database** choice instead of automatically reactivating the same downloaded
+version. Only a higher hint causes the worker to request the signed artifact.
+The verified signed version must agree with the hint and be strictly above the
+durable high-water version before activation. Invalid, oversized, rate-limited,
+or failed hints do not request the artifact, do not change active data, and wait
+for the next daily alarm rather than retrying.
+
+Clicking **Check for updates** remains the manual path. It requests and fully
+verifies the signed artifact directly, so an explicit manual check can
+reactivate a previously accepted same-version download after a restore. The
+artifact endpoint is compile-time fixed:
 
 `https://api.github.com/repos/toml01/eipeek/contents/data/database.signed.json?ref=main`
 
-The request asks for GitHub's documented `application/vnd.github.raw+json`
-representation, uses a 15-second timeout, omits credentials and referrer data,
-and relies on [GitHub REST's documented CORS support][github-cors]. No message can
-supply another URL, and there is no token in the extension.
+Both requests ask for GitHub's documented `application/vnd.github.raw+json`
+representation, use a 15-second timeout, omit credentials and referrer data,
+reject redirects, bypass caches, and rely on [GitHub REST's documented CORS
+support][github-cors]. No message can supply another URL, and there is no token
+in the extension. Only the matching alarm and an explicit extension-page manual
+check can fetch; content scripts and web pages cannot trigger either mutation.
 
 The downloaded file is data, not code. Its exact payload bytes must have a valid
 ECDSA P-256/SHA-256 signature from the public key bundled with EIPeek. P-256
@@ -500,18 +526,21 @@ both the hover screenshot and the packaged zip.
 
 ## Permissions
 
-`storage` only under `permissions` — for settings, verified downloaded database
-bytes, and the small activation signal. No `tabs`, no
-`web_accessible_resources`.
+The manifest permissions are exactly `storage` and `alarms`. `storage` holds
+settings, verified downloaded database bytes, and small activation/status
+signals. `alarms` schedules the on-by-default approximate daily background
+database check; turning the database toggle off clears that alarm. There is no
+`tabs` permission and no `web_accessible_resources`.
 
 The content script matches `<all_urls>`, which both Chrome and the Chrome Web
 Store count as broad host access; it is what makes the install prompt say "Read
 and change your data on all websites". What the extension does with that access
 is narrow: it reads text nodes and paints highlights. `INPUT`, `TEXTAREA`,
 `SELECT`, `SCRIPT`, and `IFRAME` are among the skipped tags, so form fields and
-passwords are never read, and no page content is stored or transmitted. Settings
-go to `storage.sync`, so the browser copies them between your own signed-in
-devices. Downloaded database data stays in `storage.local`. See
+passwords are never read, and no page content is stored or transmitted. Settings,
+including the daily-check preference, go to `storage.sync`, so the browser copies
+them between your own signed-in devices. Downloaded database data stays in
+`storage.local`. See
 [PRIVACY.md](PRIVACY.md).
 
 ## Known limitations
@@ -532,9 +561,10 @@ devices. Downloaded database data stays in `storage.local`. See
   [above](#references-split-across-elements).
 - **Chromium only.** `CSS.highlights` is needed for painting. A Firefox port is
   plausible since hover no longer depends on a Chrome-only API.
-- **Data can go stale until you check manually.** The package fallback is updated
-  with extension releases; signed database updates are never checked
-  automatically, so browsing still triggers no network requests.
+- **Automatic check timing is approximate.** Chrome may delay alarms while the
+  browser or device is asleep. The next check runs when Chrome delivers the
+  daily alarm; there is no retry loop. Browsing itself still triggers no network
+  requests.
 
 ## Performance
 

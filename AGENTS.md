@@ -23,7 +23,7 @@ Chrome MV3 extension (WXT). Highlights EIP/ERC references with the CSS Custom Hi
 - `src/ui/tooltip.ts` — closed shadow root + `all: initial`
 - `data/eips.json` — generated, committed, pretty JSON for dataset review
 - `data/aliases.json` — curated only. Never shipped; reasons must not appear in the bundle
-- `data/database.signed.json` — manually signed update envelope fetched only after an explicit settings click; never copied as a static output file
+- `data/database.signed.json` — manually signed update envelope fetched by an explicit settings check or after a higher automatic version hint; never copied as a static output file
 - `data/database-version.json` — manually incremented monotonic `YYYYMMDDNN` input. Never reuse a version for changed payload bytes.
 - `data/database-public-key.json` — the only signing material bundled with the extension. The private key stays at gitignored `.secrets/database-signing-private.pem`; back it up offline and never stage it.
 - `src/core/numbers.generated.ts` — generated. Edit `data/aliases.json`, then `data:build`
@@ -35,7 +35,7 @@ Chrome MV3 extension (WXT). Highlights EIP/ERC references with the CSS Custom Hi
 - Wrap matches in DOM nodes. Paint with `CSS.highlights` only. e2e asserts `document.body.innerHTML` is byte-identical.
 - Use `CSS.highlights.highlightsFromPoint` (present-but-empty on some Chromium). Caret hit-test stays.
 - Skip already-linked text. No host allowlist for bare numbers. No `getComputedStyle` in the scan (static tag list).
-- Add `web_accessible_resources`, `tabs`, or browse-time fetches. The sole runtime fetch is the manual background database check to the compile-time fixed GitHub Contents URL; metadata still goes through `runtime.sendMessage`.
+- Add `web_accessible_resources`, `tabs`, or browse-time fetches. Runtime update fetches are limited to the two compile-time fixed GitHub Contents URLs: the matching daily alarm requests the small version hint and conditionally the signed artifact, while an explicit extension-page manual check requests the artifact directly. Metadata still goes through `runtime.sendMessage`.
 - Return a Promise from the background `onMessage` listener. Chrome ignores it; use `sendResponse` and `return true`.
 - Set `include` or `types` in root `tsconfig.json` (drops WXT’s generated types).
 - Re-enable Vite `modulePreload` (cross-world extension preload warnings). Do not put `<title>` in `popup/index.html` (WXT would overwrite `action.default_title`).
@@ -63,4 +63,5 @@ Chrome MV3 extension (WXT). Highlights EIP/ERC references with the CSS Custom Hi
 
 - Vitest excludes `.claude/**` and `.output/**` (worktree copies would inflate the count).
 - e2e also asserts: no `modulepreload` in popup/options HTML, compact one-line `background.js`, and neither `aliases.json` nor `database.payload.json` in `.output`.
+- Manifest permissions are exactly `storage` and `alarms`; the daily database toggle is a dedicated sync key so changing it must not rescan pages.
 - Icons in `src/public/icon/` are committed inputs; `npm run icons` only when the mark changes.

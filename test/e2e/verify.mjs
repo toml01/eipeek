@@ -91,8 +91,8 @@ if (aliasEntries.some(({ reason }) => reason && builtBackground.includes(reason)
 
 const manifest = JSON.parse(await readFile(path.join(EXT, 'manifest.json'), 'utf8'));
 check(
-  'manifest keeps storage as its only optional permission',
-  JSON.stringify(manifest.permissions) === JSON.stringify(['storage']),
+  'manifest permissions are exactly storage and alarms',
+  JSON.stringify(manifest.permissions) === JSON.stringify(['storage', 'alarms']),
   JSON.stringify(manifest.permissions),
 );
 check(
@@ -101,10 +101,9 @@ check(
   String(manifest.minimum_chrome_version),
 );
 check(
-  'manifest adds no host, tabs, alarms, or web-accessible-resource permission',
+  'manifest adds no host, tabs, or web-accessible-resource permission',
   !Object.hasOwn(manifest, 'host_permissions') &&
     !manifest.permissions?.includes('tabs') &&
-    !manifest.permissions?.includes('alarms') &&
     !Object.hasOwn(manifest, 'web_accessible_resources'),
 );
 const forbiddenDatabaseOutputs = new Set([
@@ -124,9 +123,15 @@ check(
 );
 const fixedDatabaseUrl =
   'https://api.github.com/repos/toml01/eipeek/contents/data/database.signed.json?ref=main';
+const fixedVersionHintUrl =
+  'https://api.github.com/repos/toml01/eipeek/contents/data/database-version.json?ref=main';
 check(
-  'background contains exactly the compile-time fixed database endpoint',
+  'background contains the fixed signed-database endpoint exactly once',
   builtBackground.split(fixedDatabaseUrl).length === 2,
+);
+check(
+  'background contains the fixed version-hint endpoint exactly once',
+  builtBackground.split(fixedVersionHintUrl).length === 2,
 );
 check(
   'background contains no private signing key',
@@ -241,7 +246,7 @@ try {
   await workerCdp.send('Network.enable');
   const databaseNetworkRequests = [];
   workerCdp.on('Network.requestWillBeSent', ({ request }) => {
-    if (request.url.includes('/data/database.signed.json')) {
+    if (request.url.includes('/data/database.signed.json') || request.url.includes('/data/database-version.json')) {
       databaseNetworkRequests.push({ url: request.url, method: request.method, headers: request.headers });
     }
   });
@@ -253,11 +258,19 @@ try {
     await extensionPageTab.goto(`chrome-extension://${extensionId}/${extensionPage}`);
     await extensionPageTab.waitForSelector('[data-testid="feedback-link"]');
     await extensionPageTab.waitForSelector('#databaseSection[aria-busy="false"]');
+    await waitFor(
+      () => extensionPageTab.$eval('#databaseNextCheck', (node) =>
+        !['—', 'Scheduling…'].includes(node.textContent?.trim()) ? node.textContent.trim() : undefined).catch(() => undefined),
+      8000,
+      100,
+    );
     const databaseUi = await extensionPageTab.evaluate(() => ({
       heading: document.querySelector('#database-heading')?.textContent?.trim(),
       source: document.querySelector('#databaseSource')?.textContent?.trim(),
       version: document.querySelector('#databaseVersion')?.textContent?.trim(),
       lastCheck: document.querySelector('#databaseLastCheck')?.textContent?.trim(),
+      nextCheck: document.querySelector('#databaseNextCheck')?.textContent?.trim(),
+      autoChecked: document.querySelector('[data-testid="database-auto-update"]')?.checked,
       checkText: document.querySelector('[data-testid="database-check"]')?.textContent?.trim(),
       checkDisabled: document.querySelector('[data-testid="database-check"]')?.disabled,
       restoreText: document.querySelector('[data-testid="database-restore"]')?.textContent?.trim(),
@@ -271,6 +284,8 @@ try {
         databaseUi.source === 'Bundled fallback' &&
         databaseUi.version === '2026082402' &&
         databaseUi.lastCheck === 'Never' &&
+        databaseUi.autoChecked === true &&
+        !['—', 'Scheduling…', 'Disabled'].includes(databaseUi.nextCheck) &&
         databaseUi.checkText === 'Check for updates' &&
         databaseUi.checkDisabled === false &&
         databaseUi.restoreText === 'Restore bundled database' &&
@@ -324,6 +339,48 @@ try {
 
     await extensionPageTab.close();
   }
+
+  // The preference defaults on, survives in sync storage, and controls only the
+  // named alarm. Disable it for the long browse tests so randomized delivery
+  // cannot make their no-request assertions timing-dependent.
+  const alarmSettingsTab = await browser.newPage();
+  await alarmSettingsTab.goto(`chrome-extension://${extensionId}/options.html`);
+  await alarmSettingsTab.waitForSelector('#databaseSection[aria-busy="false"]');
+  const initialAlarm = await alarmSettingsTab.evaluate(async () => ({
+    preference: (await chrome.storage.sync.get('eipeek.database.autoUpdate.v1'))['eipeek.database.autoUpdate.v1'],
+    alarm: await chrome.alarms.get('eipeek.database.daily.v1'),
+  }));
+  check(
+    'daily checks default on with a scheduled 1440-minute alarm',
+    initialAlarm.preference === undefined &&
+      initialAlarm.alarm?.periodInMinutes === 1440 &&
+      initialAlarm.alarm?.scheduledTime > Date.now(),
+    JSON.stringify(initialAlarm),
+  );
+  await alarmSettingsTab.$eval('[data-testid="database-auto-update"]', (input) => input.click());
+  const disabledSchedule = await waitFor(
+    () => alarmSettingsTab.evaluate(async () => {
+      const next = document.querySelector('#databaseNextCheck')?.textContent?.trim();
+      const alarm = await chrome.alarms.get('eipeek.database.daily.v1');
+      return next === 'Disabled' && !alarm ? { next, checked: document.querySelector('[data-testid="database-auto-update"]')?.checked } : undefined;
+    }),
+    8000,
+    100,
+  );
+  check('disabling automatic checks clears the daily alarm', disabledSchedule?.checked === false, JSON.stringify(disabledSchedule));
+  await alarmSettingsTab.$eval('[data-testid="database-auto-update"]', (input) => input.click());
+  const recreatedSchedule = await waitFor(
+    () => alarmSettingsTab.evaluate(async () => {
+      const alarm = await chrome.alarms.get('eipeek.database.daily.v1');
+      return alarm?.periodInMinutes === 1440 ? alarm : undefined;
+    }),
+    8000,
+    100,
+  );
+  check('re-enabling automatic checks recreates the daily alarm', !!recreatedSchedule, JSON.stringify(recreatedSchedule));
+  await alarmSettingsTab.$eval('[data-testid="database-auto-update"]', (input) => input.click());
+  await waitFor(() => alarmSettingsTab.$eval('#databaseNextCheck', (node) => node.textContent?.trim() === 'Disabled'), 8000, 100);
+  await alarmSettingsTab.close();
 
   /** Settings live behind the extension origin, so drive them from its own page. */
   const setSetting = async (patch) => {
@@ -419,7 +476,7 @@ try {
     contentContext ? JSON.stringify({ origin: contentContext.origin, name: contentContext.name }) : 'no context',
   );
   check(
-    'startup, status rendering, and page scanning make no database request',
+    'startup, status rendering, page scanning, and hover setup make no database request',
     databaseNetworkRequests.length === 0,
     JSON.stringify(databaseNetworkRequests),
   );
@@ -693,6 +750,11 @@ try {
       !shadowText.includes('Check for updates') &&
       !shadowText.includes('2026082402'),
   );
+  check(
+    'page hover makes no database request',
+    databaseNetworkRequests.length === 0,
+    JSON.stringify(databaseNetworkRequests),
+  );
 
   // --- 6b. explicit, fixed-URL database actions -------------------------
   // Intercept the one compile-time endpoint in the worker itself. This proves
@@ -700,17 +762,22 @@ try {
   // on main while this feature branch is under test.
   const interceptedDatabaseRequests = [];
   let nextResponseBody = signedDatabaseArtifact;
+  const versionHintBody = `${JSON.stringify({
+    schemaVersion: 1,
+    databaseVersion: 2026082401,
+    keyId: 'eipeek-database-p256-2026-01',
+  }, null, 2)}\n`;
   let releaseResponse = () => {};
   let responseGate = new Promise((resolve) => {
     releaseResponse = resolve;
   });
   let nextPaused;
   const onDatabaseRequestPaused = async (event) => {
-    if (event.request.url !== fixedDatabaseUrl) {
+    if (event.request.url !== fixedDatabaseUrl && event.request.url !== fixedVersionHintUrl) {
       await workerCdp.send('Fetch.continueRequest', { requestId: event.requestId });
       return;
     }
-    const body = nextResponseBody;
+    const body = event.request.url === fixedVersionHintUrl ? versionHintBody : nextResponseBody;
     const gate = responseGate;
     const notify = nextPaused;
     nextPaused = undefined;
@@ -738,6 +805,11 @@ try {
       {
         urlPattern:
           'https://api.github.com/repos/toml01/eipeek/contents/data/database.signed.json*',
+        requestStage: 'Request',
+      },
+      {
+        urlPattern:
+          'https://api.github.com/repos/toml01/eipeek/contents/data/database-version.json*',
         requestStage: 'Request',
       },
     ],
@@ -824,13 +896,18 @@ try {
     'structuredClone(globalThis.__eipeekDatabaseStorageEvents)',
   );
   check(
-    'content listener receives only the small session activation signal, never local artifact changes',
+    'content listener receives only small session signals, never local artifact changes',
     Array.isArray(contentStorageEvents) &&
-      contentStorageEvents.length === 1 &&
-      contentStorageEvents[0].areaName === 'session' &&
-      JSON.stringify(contentStorageEvents[0].keys) ===
-        JSON.stringify(['eipeek.database.activation.v1']) &&
-      contentStorageEvents[0].bytes < 256,
+      contentStorageEvents.some((event) => event.keys.includes('eipeek.database.activation.v1')) &&
+      contentStorageEvents.every(
+        (event) =>
+          event.areaName === 'session' &&
+          event.keys.length === 1 &&
+          ['eipeek.database.activation.v1', 'eipeek.database.uiChange.v1'].includes(
+            event.keys[0],
+          ) &&
+          event.bytes < 256,
+      ),
     JSON.stringify(contentStorageEvents),
   );
   const requestHeaders = Object.fromEntries(
@@ -917,6 +994,64 @@ try {
     'invalid update reports an accessible error and leaves bundled data active',
     updateError?.role === 'alert' && failedUiSource === 'Bundled fallback',
     JSON.stringify({ updateError, failedUiSource }),
+  );
+
+  // Trigger the real worker alarm path with a short-lived test alarm. The hint
+  // equals the durable high-water version retained across Restore, so automatic
+  // checking must record success without fetching/reactivating the artifact.
+  const artifactRequestsBeforeAutomatic = interceptedDatabaseRequests.filter(({ url }) => url === fixedDatabaseUrl).length;
+  await updateTab.$eval('[data-testid="database-auto-update"]', (input) => input.click());
+  await waitFor(
+    () => updateTab.evaluate(async () => (await chrome.alarms.get('eipeek.database.daily.v1'))?.periodInMinutes === 1440),
+    8000,
+    100,
+  );
+  const concurrentEnabledSchedule = await waitFor(
+    () => concurrentStatusTab.evaluate(() => {
+      const checked = document.querySelector('[data-testid="database-auto-update"]')?.checked;
+      const next = document.querySelector('#databaseNextCheck')?.textContent?.trim();
+      return checked && next !== 'Disabled' ? { checked, next } : undefined;
+    }).catch(() => undefined),
+    8000,
+    100,
+  );
+  check(
+    'concurrently open settings surface refreshes after schedule changes',
+    concurrentEnabledSchedule?.checked === true,
+    JSON.stringify(concurrentEnabledSchedule),
+  );
+  await updateTab.evaluate(() => chrome.alarms.create('eipeek.database.daily.v1', { when: Date.now() + 100 }));
+  const automaticSuccess = await waitFor(
+    () => updateTab.evaluate(() => {
+      const result = document.querySelector('#databaseLastResult')?.textContent?.trim();
+      const last = document.querySelector('#databaseLastCheck')?.textContent?.trim();
+      return result?.includes('Automatic check found no version newer') ? { result, last } : undefined;
+    }),
+    12000,
+    100,
+  );
+  const automaticHintRequests = interceptedDatabaseRequests.filter(({ url }) => url === fixedVersionHintUrl);
+  const artifactRequestsAfterAutomatic = interceptedDatabaseRequests.filter(({ url }) => url === fixedDatabaseUrl).length;
+  const automaticState = await updateTab.evaluate(async () => ({
+    source: document.querySelector('#databaseSource')?.textContent?.trim(),
+    next: document.querySelector('#databaseNextCheck')?.textContent?.trim(),
+    alarm: await chrome.alarms.get('eipeek.database.daily.v1'),
+  }));
+  const concurrentAutomaticResult = await waitFor(
+    () => concurrentStatusTab.$eval('#databaseLastResult', (node) =>
+      node.textContent?.includes('Automatic check found no version newer') ? node.textContent.trim() : undefined).catch(() => undefined),
+    8000,
+    100,
+  );
+  check(
+    'matching alarm performs the fixed hint check and preserves restore intent',
+    !!automaticSuccess &&
+      automaticHintRequests.length === 1 &&
+      artifactRequestsAfterAutomatic === artifactRequestsBeforeAutomatic &&
+      automaticState.source === 'Bundled fallback' &&
+      automaticState.alarm?.periodInMinutes === 1440 &&
+      !!concurrentAutomaticResult,
+    JSON.stringify({ automaticSuccess, automaticState, concurrentAutomaticResult, requests: interceptedDatabaseRequests }),
   );
   await workerCdp.send('Fetch.disable');
   workerCdp.off('Fetch.requestPaused', onDatabaseRequestPaused);

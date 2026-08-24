@@ -28,7 +28,7 @@ FEATURES
 - Select any number on a page to look it up on demand, prefix or not.
 - Per-site blocking, an adjustable per-page match limit, and a debug mode for when something doesn't resolve.
 - Spotted a wrong or missing entry? The "Mistake?" link in every tooltip opens a prefilled GitHub feedback form.
-- No network requests while you browse and no tabs permission. The whole dataset ships inside the extension. A signed database update is checked only when you click the button; that credentialless GitHub request contains no page data or settings, and verified data stays local.
+- No network requests are caused by the pages you browse, and there is no tabs permission. The whole dataset ships inside the extension. An on-by-default daily background check contacts GitHub for a small version hint and downloads signed data only when newer; you can disable it in settings, and the manual check remains available. These credentialless requests contain no page data or settings, and verified data stays local.
 ```
 
 ---
@@ -62,10 +62,16 @@ EIPeek detects EIP and ERC references in the text of the current web page and sh
 *(For the Developer Dashboard's Privacy Practices tab, which asks for one
 justification per kind of access requested.)*
 
-### `storage` — the only entry under `permissions`
+### `storage`
 
 ```
-The storage permission stores the user's own extension settings, verified database updates downloaded only after a manual check, and a small local activation signal. Settings use browser sync; downloaded proposal data stays local to the device.
+The storage permission stores the user's extension settings, including the automatic-check preference, verified database updates, and small local activation/status signals. Settings use browser sync; downloaded proposal data stays local to the device.
+```
+
+### `alarms`
+
+```
+The alarms permission schedules an approximate daily background database check, enabled by default. The check contacts only fixed GitHub files, first requesting a small version hint and downloading the signed database only when a newer version may exist. Disabling the database auto-update toggle clears the alarm.
 ```
 
 ### Host permission

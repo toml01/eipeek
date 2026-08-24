@@ -141,6 +141,22 @@ textarea {
   font-weight: 550;
 }
 
+.database-auto {
+  display: flex;
+  gap: 11px;
+  align-items: start;
+  margin-top: 10px;
+}
+
+.database-auto input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.database-auto span {
+  flex: 1;
+}
+
 .database-details {
   display: grid;
   gap: 4px;
@@ -160,6 +176,10 @@ textarea {
 
 .database-details dd {
   margin: 0;
+}
+
+.database-details dd.error {
+  color: #b42318;
 }
 
 .database-actions {
@@ -213,6 +233,7 @@ textarea {
 @media (prefers-color-scheme: dark) {
   .database-message.success { color: #4ade80; }
   .database-message.error { color: #ff8f86; }
+  .database-details dd.error { color: #ff8f86; }
 }
 
 .feedback {

@@ -7,6 +7,9 @@
 - Manual, signature-verified database updates from a fixed GitHub Contents API
   endpoint, with atomic local activation and a permanent bundled fallback.
 - Database status, check, and restore controls in the shared popup/options UI.
+- On-by-default daily database checks using a randomized `chrome.alarms`
+  schedule, a small fixed GitHub version hint, and the existing signed
+  activation path, with an opt-out toggle and visible schedule/result status.
 
 ### Fixed
 

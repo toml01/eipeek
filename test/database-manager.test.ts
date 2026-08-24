@@ -12,6 +12,8 @@ import {
 import {
   DATABASE_UPDATE_ACCEPT,
   DATABASE_UPDATE_URL,
+  DATABASE_VERSION_HINT_URL,
+  MAX_DATABASE_VERSION_HINT_BYTES,
   DATABASE_STATE_STORAGE_KEY,
   DatabaseManager,
   type DatabaseStorage,
@@ -90,6 +92,11 @@ const verifyTestArtifact = (raw: string) =>
   verifySignedDatabase(raw, { publicKey, expectedKeyId: TEST_KEY_ID });
 const response = (body: string, status = 200) =>
   new Response(body, { status, headers: { 'content-type': 'application/json' } });
+const versionHint = (databaseVersion: number) => `${JSON.stringify({
+  schemaVersion: 1,
+  databaseVersion,
+  keyId: bundledPayload.keyId,
+}, null, 2)}\n`;
 
 function manager(
   storage: MemoryStorage,
@@ -413,5 +420,125 @@ describe('manual database manager', () => {
     expect(
       createHash('sha256').update(JSON.stringify(storage.values[DATABASE_STATE_STORAGE_KEY])).digest('hex'),
     ).toBe(stateDigest);
+  });
+});
+
+describe('automatic database manager', () => {
+  let storage: MemoryStorage;
+
+  beforeEach(() => {
+    storage = new MemoryStorage();
+  });
+
+  it('fetches only the small fixed hint when it is not above the durable high-water version', async () => {
+    const fetcher = vi.fn(async (_url: string, _init: RequestInit) =>
+      response(versionHint(bundledPayload.databaseVersion)));
+    const database = manager(storage, fetcher);
+
+    const result = await database.checkForUpdates('automatic');
+
+    expect(result.outcome).toBe('current');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]![0]).toBe(DATABASE_VERSION_HINT_URL);
+    expect(fetcher.mock.calls[0]![1]).toMatchObject({
+      headers: { Accept: DATABASE_UPDATE_ACCEPT },
+      credentials: 'omit',
+      cache: 'no-store',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+    });
+    expect(result.status).toMatchObject({ lastCheckOutcome: 'current', source: 'bundled' });
+  });
+
+  it('does not reactivate a previously accepted remote version after restore', async () => {
+    const version = bundledPayload.databaseVersion + 1;
+    const artifact = signPayload(makePayload(version));
+    const fetcher = vi.fn(async (url: string) =>
+      response(url === DATABASE_VERSION_HINT_URL ? versionHint(version) : artifact));
+    const database = manager(storage, fetcher);
+
+    await database.checkForUpdates();
+    await database.restoreBundled();
+    fetcher.mockClear();
+    const result = await database.checkForUpdates('automatic');
+
+    expect(result).toMatchObject({ outcome: 'current', status: { source: 'bundled', highWaterVersion: version } });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]![0]).toBe(DATABASE_VERSION_HINT_URL);
+  });
+
+  it('downloads, verifies, and activates only when the verified version agrees with a higher hint', async () => {
+    const version = bundledPayload.databaseVersion + 1;
+    const artifact = signPayload(makePayload(version));
+    const fetcher = vi.fn(async (url: string) =>
+      response(url === DATABASE_VERSION_HINT_URL ? versionHint(version) : artifact));
+    const database = manager(storage, fetcher);
+
+    const result = await database.checkForUpdates('automatic');
+
+    expect(result).toMatchObject({ outcome: 'activated', status: { activeVersion: version, source: 'downloaded' } });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([DATABASE_VERSION_HINT_URL, DATABASE_UPDATE_URL]);
+  });
+
+  it.each([
+    ['malformed', '{"schemaVersion":1}', 'invalid-hint'],
+    ['extra-field', JSON.stringify({ schemaVersion: 1, databaseVersion: bundledPayload.databaseVersion + 1, keyId: bundledPayload.keyId, url: 'x' }), 'invalid-hint'],
+  ])('rejects a %s hint without fetching the artifact', async (_name, hint, code) => {
+    const fetcher = vi.fn(async () => response(hint));
+    const database = manager(storage, fetcher);
+
+    await expect(database.checkForUpdates('automatic')).rejects.toMatchObject({ code });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(await database.status()).toMatchObject({ source: 'bundled', lastCheckOutcome: 'error' });
+  });
+
+  it('rejects an oversized hint without reading an artifact', async () => {
+    const fetcher = vi.fn(async () => new Response('{}', {
+      status: 200,
+      headers: { 'content-length': String(MAX_DATABASE_VERSION_HINT_BYTES + 1) },
+    }));
+    const database = manager(storage, fetcher);
+
+    await expect(database.checkForUpdates('automatic')).rejects.toMatchObject({ code: 'hint-too-large' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a signed artifact whose version disagrees with the higher hint', async () => {
+    const hinted = bundledPayload.databaseVersion + 2;
+    const artifact = signPayload(makePayload(bundledPayload.databaseVersion + 1));
+    const fetcher = vi.fn(async (url: string) =>
+      response(url === DATABASE_VERSION_HINT_URL ? versionHint(hinted) : artifact));
+    const database = manager(storage, fetcher);
+
+    await expect(database.checkForUpdates('automatic')).rejects.toMatchObject({ code: 'hint-mismatch' });
+    expect(await database.status()).toMatchObject({ source: 'bundled', lastCheckOutcome: 'error' });
+  });
+
+  it('shares the mutation lock without allowing an overlap to replace the in-flight result', async () => {
+    const version = bundledPayload.databaseVersion + 1;
+    const artifact = signPayload(makePayload(version));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fetcher = vi.fn(async (url: string) => {
+      await gate;
+      return response(url === DATABASE_VERSION_HINT_URL ? versionHint(version) : artifact);
+    });
+    const database = manager(storage, fetcher);
+
+    const automatic = database.checkForUpdates('automatic');
+    await vi.waitFor(async () => expect((await database.status()).busy).toBe(true));
+    await expect(database.checkForUpdates('manual')).rejects.toMatchObject({ code: 'busy' });
+    release();
+    await expect(automatic).resolves.toMatchObject({ outcome: 'activated' });
+    expect(await database.status()).toMatchObject({ activeVersion: version, lastCheckOutcome: 'activated' });
+  });
+
+  it('records and publishes automatic network failures without changing active data', async () => {
+    const notifyStatusChange = vi.fn(async () => {});
+    const database = manager(storage, async () => { throw new TypeError('offline'); }, { notifyStatusChange });
+
+    await expect(database.checkForUpdates('automatic')).rejects.toMatchObject({ code: 'network' });
+    expect(await database.status()).toMatchObject({ source: 'bundled', lastCheckOutcome: 'error' });
+    expect(notifyStatusChange).toHaveBeenCalledTimes(1);
   });
 });
