@@ -45,6 +45,7 @@ export class DatabaseAlarmScheduler {
   private readonly random: () => number;
   private readonly now: () => Date;
   private readonly notifyChange: () => Promise<void>;
+  private reconciliation: Promise<DatabaseAlarmStatus> | null = null;
 
   constructor(options: DatabaseAlarmSchedulerOptions) {
     this.alarms = options.alarms;
@@ -69,7 +70,16 @@ export class DatabaseAlarmScheduler {
     return this.reconcile();
   }
 
-  async reconcile(): Promise<DatabaseAlarmStatus> {
+  reconcile(): Promise<DatabaseAlarmStatus> {
+    if (!this.reconciliation) {
+      this.reconciliation = this.reconcileOnce().finally(() => {
+        this.reconciliation = null;
+      });
+    }
+    return this.reconciliation;
+  }
+
+  private async reconcileOnce(): Promise<DatabaseAlarmStatus> {
     const enabled = await this.isEnabled();
     const existing = await this.alarms.get(DATABASE_DAILY_ALARM_NAME);
     if (!enabled) {

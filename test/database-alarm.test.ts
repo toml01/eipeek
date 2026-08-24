@@ -68,6 +68,15 @@ describe('daily database alarm', () => {
     expect(alarms.clear).not.toHaveBeenCalled();
   });
 
+  it('coalesces concurrent lifecycle reconciliation so the first delay is randomized once', async () => {
+    const alarms = new AlarmApi();
+    const daily = scheduler(alarms, new SyncStorage());
+
+    await Promise.all([daily.reconcile(), daily.reconcile(), daily.reconcile()]);
+
+    expect(alarms.create).toHaveBeenCalledTimes(1);
+  });
+
   it('replaces an incorrect alarm and clears the schedule when disabled', async () => {
     const alarms = new AlarmApi();
     alarms.alarm = { name: DATABASE_DAILY_ALARM_NAME, scheduledTime: 1, periodInMinutes: 60 };
