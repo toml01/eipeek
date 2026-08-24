@@ -20,6 +20,7 @@ export interface DatabaseRuntimeManager {
 export interface DatabaseRuntimeScheduler {
   status(): Promise<DatabaseAlarmStatus>;
   setEnabled(enabled: boolean): Promise<DatabaseAlarmStatus>;
+  reconcile(): Promise<DatabaseAlarmStatus>;
 }
 
 export type DatabaseRuntimeRequest =
@@ -46,17 +47,27 @@ export class DatabaseRuntime {
     return status;
   }
 
+  async reconcileSchedule(): Promise<DatabaseAlarmStatus> {
+    return this.rememberSchedule(await this.scheduler.reconcile());
+  }
+
   async handle(request: DatabaseRuntimeRequest): Promise<DatabaseStatusResponse | DatabaseActionResponse> {
     switch (request.type) {
       case 'database.status':
         return { ok: true, status: await this.combinedStatus() };
       case 'database.check':
+        await this.ensureScheduleKnown();
         return this.finishSuccessfulMutation(await this.manager.checkForUpdates('manual'));
       case 'database.restore':
+        await this.ensureScheduleKnown();
         return this.finishSuccessfulMutation(await this.manager.restoreBundled());
       case 'database.setAutoUpdate': {
+        // Capture the unrelated manager status before the toggle. Once the
+        // preference and alarm mutation succeed, no supplementary read can
+        // convert that successful toggle into an error response.
+        const managerStatus = await this.manager.status();
         const schedule = this.rememberSchedule(await this.scheduler.setEnabled(request.enabled));
-        return { ok: true, status: this.mergeStatus(await this.manager.status(), schedule) };
+        return { ok: true, status: this.mergeStatus(managerStatus, schedule) };
       }
     }
   }
@@ -81,8 +92,11 @@ export class DatabaseRuntime {
   }
 
   private async combinedStatus(): Promise<DatabaseStatus> {
-    const [managerStatus, schedule] = await Promise.all([this.manager.status(), this.scheduler.status()]);
-    return this.mergeStatus(managerStatus, this.rememberSchedule(schedule));
+    // Remember a successful scheduler read even if the independent manager read
+    // fails and prevents construction of the combined response.
+    const schedule = this.scheduler.status().then((status) => this.rememberSchedule(status));
+    const [managerStatus, rememberedSchedule] = await Promise.all([this.manager.status(), schedule]);
+    return this.mergeStatus(managerStatus, rememberedSchedule);
   }
 
   private async finishSuccessfulMutation(
@@ -98,10 +112,16 @@ export class DatabaseRuntime {
     try {
       return this.rememberSchedule(await this.scheduler.status());
     } catch {
-      // The mutation already succeeded. Reuse the last observed schedule rather
-      // than turning that success into a generic failure. The unread scheduler
-      // default is only used when no schedule has been observed yet.
-      return this.lastKnownSchedule ?? { autoUpdateEnabled: true, nextScheduledCheckAt: null };
+      // ensureScheduleKnown() runs before the manager mutation, so this fallback
+      // is authoritative or last-known and never an invented enabled default.
+      if (this.lastKnownSchedule) return this.lastKnownSchedule;
+      throw new DatabaseManagerError('storage', 'The automatic update preference is unavailable.');
+    }
+  }
+
+  private async ensureScheduleKnown(): Promise<void> {
+    if (!this.lastKnownSchedule) {
+      this.rememberSchedule(await this.scheduler.status());
     }
   }
 

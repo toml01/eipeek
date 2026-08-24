@@ -127,9 +127,10 @@ export default defineBackground(() => {
     storage: chromeApi.storage.sync,
     notifyChange: publishUiChange,
   });
+  const runtime = new DatabaseRuntime(manager, scheduler);
 
   const reconcileSchedule = () => {
-    void scheduler.reconcile().catch(() => {});
+    void runtime.reconcileSchedule().catch(() => {});
   };
 
   // Lifecycle and alarm listeners are registered synchronously at worker
@@ -145,14 +146,12 @@ export default defineBackground(() => {
     }
   });
 
-  const runtime = new DatabaseRuntime(manager, scheduler);
-
   // Reverify persisted downloaded bytes after every worker start. Initialization
   // reads local storage only and never calls fetch; network is exclusive to the
   // manual check or delivery of the matching daily alarm below.
   void Promise.all([
     manager.initialize(),
-    scheduler.reconcile().then((status) => runtime.rememberSchedule(status)),
+    runtime.reconcileSchedule(),
   ]).catch(() => {});
 
   chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {

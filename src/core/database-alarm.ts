@@ -45,6 +45,7 @@ export class DatabaseAlarmScheduler {
   private readonly random: () => number;
   private readonly now: () => Date;
   private readonly notifyChange: () => Promise<void>;
+  private lastKnownEnabled: boolean | undefined;
   // Writes, alarm mutations, and their status snapshots are one ordered stream.
   // enqueue() also lets later requests proceed when an earlier request fails.
   private queue: Promise<void> = Promise.resolve();
@@ -62,19 +63,30 @@ export class DatabaseAlarmScheduler {
   }
 
   private async readStatus(): Promise<DatabaseAlarmStatus> {
-    const [enabled, alarm] = await Promise.all([this.isEnabled(), this.alarms.get(DATABASE_DAILY_ALARM_NAME)]);
-    return {
-      autoUpdateEnabled: enabled,
-      nextScheduledCheckAt: enabled && isCorrectAlarm(alarm)
-        ? new Date(alarm.scheduledTime).toISOString()
-        : null,
-    };
+    // Read the preference first: it remains authoritative even when Chrome
+    // cannot currently report the alarm. `null` is already rendered as no
+    // available next time without changing the toggle state.
+    let enabled: boolean;
+    try {
+      enabled = await this.isEnabled();
+    } catch (error) {
+      if (this.lastKnownEnabled === undefined) throw error;
+      enabled = this.lastKnownEnabled;
+    }
+    try {
+      return alarmStatus(enabled, await this.alarms.get(DATABASE_DAILY_ALARM_NAME));
+    } catch {
+      return alarmStatus(enabled, undefined);
+    }
   }
 
   setEnabled(enabled: boolean): Promise<DatabaseAlarmStatus> {
     return this.enqueue(async () => {
       await this.storage.set({ [DATABASE_AUTO_UPDATE_STORAGE_KEY]: enabled });
-      return this.reconcileOnce();
+      this.lastKnownEnabled = enabled;
+      // The successful write is authoritative; do not reread it while applying
+      // the corresponding alarm mutation.
+      return this.reconcileOnce(enabled);
     });
   }
 
@@ -82,20 +94,31 @@ export class DatabaseAlarmScheduler {
     return this.enqueue(() => this.reconcileOnce());
   }
 
-  private async reconcileOnce(): Promise<DatabaseAlarmStatus> {
-    const enabled = await this.isEnabled();
+  private async reconcileOnce(knownEnabled?: boolean): Promise<DatabaseAlarmStatus> {
+    const enabled = knownEnabled ?? await this.isEnabled();
     const existing = await this.alarms.get(DATABASE_DAILY_ALARM_NAME);
+    let resultingAlarm = existing;
     if (!enabled) {
-      if (existing) await this.alarms.clear(DATABASE_DAILY_ALARM_NAME);
+      if (existing) {
+        await this.alarms.clear(DATABASE_DAILY_ALARM_NAME);
+        resultingAlarm = undefined;
+      }
     } else if (!isCorrectAlarm(existing)) {
       if (existing) await this.alarms.clear(DATABASE_DAILY_ALARM_NAME);
       await this.alarms.create(DATABASE_DAILY_ALARM_NAME, {
         delayInMinutes: firstDelayMinutes(this.random()),
         periodInMinutes: DATABASE_DAILY_PERIOD_MINUTES,
       });
+      // Chrome's create API does not return the scheduled time. Failure of this
+      // supplementary read cannot undo a successful create or preference write.
+      try {
+        resultingAlarm = await this.alarms.get(DATABASE_DAILY_ALARM_NAME);
+      } catch {
+        resultingAlarm = undefined;
+      }
     }
     await this.publishChange();
-    return this.readStatus();
+    return alarmStatus(enabled, resultingAlarm);
   }
 
   async handleAlarm(alarm: DatabaseAlarm, check: () => Promise<unknown>): Promise<boolean> {
@@ -128,7 +151,9 @@ export class DatabaseAlarmScheduler {
   private async isEnabled(): Promise<boolean> {
     const stored = await this.storage.get([DATABASE_AUTO_UPDATE_STORAGE_KEY]);
     const value = stored[DATABASE_AUTO_UPDATE_STORAGE_KEY];
-    return typeof value === 'boolean' ? value : true;
+    const enabled = typeof value === 'boolean' ? value : true;
+    this.lastKnownEnabled = enabled;
+    return enabled;
   }
 
   private async publishChange(): Promise<void> {
@@ -154,4 +179,13 @@ function isCorrectAlarm(alarm: DatabaseAlarm | undefined): alarm is DatabaseAlar
     alarm.periodInMinutes === DATABASE_DAILY_PERIOD_MINUTES &&
     Number.isFinite(alarm.scheduledTime) &&
     alarm.scheduledTime > 0;
+}
+
+function alarmStatus(enabled: boolean, alarm: DatabaseAlarm | undefined): DatabaseAlarmStatus {
+  return {
+    autoUpdateEnabled: enabled,
+    nextScheduledCheckAt: enabled && isCorrectAlarm(alarm)
+      ? new Date(alarm.scheduledTime).toISOString()
+      : null,
+  };
 }

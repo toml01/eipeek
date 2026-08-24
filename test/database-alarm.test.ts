@@ -11,6 +11,7 @@ import {
 class AlarmApi {
   alarm: DatabaseAlarm | undefined;
   getCalls = 0;
+  failOnGetCalls = new Set<number>();
   create = vi.fn((name: string, info: { delayInMinutes: number; periodInMinutes: number }) => {
     this.alarm = {
       name,
@@ -25,6 +26,7 @@ class AlarmApi {
   });
   async get(name: string) {
     this.getCalls += 1;
+    if (this.failOnGetCalls.has(this.getCalls)) throw new Error('alarms.get failed');
     return this.alarm?.name === name ? structuredClone(this.alarm) : undefined;
   }
 }
@@ -245,6 +247,57 @@ describe('daily database alarm', () => {
     expect(storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY]).toBe(false);
     expect(status).toEqual({ autoUpdateEnabled: false, nextScheduledCheckAt: null });
     expect(alarms.alarm).toBeUndefined();
+  });
+
+  it('keeps a successful enable when the post-create alarm read fails', async () => {
+    const alarms = new AlarmApi();
+    alarms.failOnGetCalls.add(2);
+    const storage = new SyncStorage();
+    storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY] = false;
+
+    const status = await scheduler(alarms, storage).setEnabled(true);
+
+    expect(status).toEqual({ autoUpdateEnabled: true, nextScheduledCheckAt: null });
+    expect(storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY]).toBe(true);
+    expect(alarms.alarm?.periodInMinutes).toBe(DATABASE_DAILY_PERIOD_MINUTES);
+    expect(alarms.getCalls).toBe(2);
+  });
+
+  it('does not make a fallible post-clear alarm read after a successful disable', async () => {
+    const alarms = new AlarmApi();
+    alarms.alarm = {
+      name: DATABASE_DAILY_ALARM_NAME,
+      scheduledTime: Date.parse('2026-08-25T00:00:00.000Z'),
+      periodInMinutes: DATABASE_DAILY_PERIOD_MINUTES,
+    };
+    alarms.failOnGetCalls.add(2);
+    const storage = new SyncStorage();
+
+    const status = await scheduler(alarms, storage).setEnabled(false);
+
+    expect(status).toEqual({ autoUpdateEnabled: false, nextScheduledCheckAt: null });
+    expect(storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY]).toBe(false);
+    expect(alarms.alarm).toBeUndefined();
+    expect(alarms.getCalls).toBe(1);
+  });
+
+  it('remembers a preference read before a reconciliation alarm failure', async () => {
+    const alarms = new AlarmApi();
+    alarms.failOnGetCalls.add(1);
+    alarms.failOnGetCalls.add(2);
+    const storage = new SyncStorage();
+    storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY] = false;
+    const daily = scheduler(alarms, storage);
+
+    await expect(daily.reconcile()).rejects.toThrow('alarms.get failed');
+    storage.get = async () => {
+      throw new Error('storage.sync.get failed');
+    };
+
+    expect(await daily.status()).toEqual({
+      autoUpdateEnabled: false,
+      nextScheduledCheckAt: null,
+    });
   });
 
   it('keeps a persisted enable when alarm creation fails', async () => {

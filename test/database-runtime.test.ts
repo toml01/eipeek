@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   DATABASE_AUTO_UPDATE_STORAGE_KEY,
+  DATABASE_DAILY_ALARM_NAME,
   DATABASE_DAILY_PERIOD_MINUTES,
   DatabaseAlarmScheduler,
   type DatabaseAlarm,
@@ -21,6 +22,8 @@ import {
 class AlarmApi {
   alarm: DatabaseAlarm | undefined;
   getFails = 0;
+  getCalls = 0;
+  failOnGetCalls = new Set<number>();
 
   create = vi.fn((name: string, info: { delayInMinutes: number; periodInMinutes: number }) => {
     this.alarm = {
@@ -37,6 +40,8 @@ class AlarmApi {
   });
 
   async get(name: string) {
+    this.getCalls += 1;
+    if (this.failOnGetCalls.has(this.getCalls)) throw new Error('alarms.get failed');
     if (this.getFails > 0) {
       this.getFails -= 1;
       throw new Error('alarms.get failed');
@@ -134,7 +139,7 @@ async function dispatch(runtime: DatabaseRuntime, request: DatabaseRuntimeReques
 }
 
 describe('database runtime actions', () => {
-  it('keeps a successful check when the later scheduler status read fails', async () => {
+  it('keeps a successful check when the later alarm status read fails', async () => {
     const alarms = new AlarmApi();
     const storage = new SyncStorage();
     const scheduler = daily(alarms, storage);
@@ -153,7 +158,7 @@ describe('database runtime actions', () => {
       status: {
         ...managerStatus(),
         autoUpdateEnabled: true,
-        nextScheduledCheckAt: '2026-08-25T00:00:00.000Z',
+        nextScheduledCheckAt: null,
       },
     });
     expect(alarms.getFails).toBe(0);
@@ -196,6 +201,7 @@ describe('database runtime actions', () => {
     const scheduler = {
       status,
       setEnabled: (enabled: boolean) => inner.setEnabled(enabled),
+      reconcile: () => inner.reconcile(),
     };
     const manager = managerStub();
     const runtime = new DatabaseRuntime(manager, scheduler);
@@ -231,6 +237,7 @@ describe('database runtime actions', () => {
         return inner.status();
       },
       setEnabled: (enabled: boolean) => inner.setEnabled(enabled),
+      reconcile: () => inner.reconcile(),
     };
     const runtime = new DatabaseRuntime(managerStub(), scheduler);
 
@@ -257,6 +264,147 @@ describe('database runtime actions', () => {
       status: {
         autoUpdateEnabled: true,
         nextScheduledCheckAt: '2026-08-25T00:00:00.000Z',
+      },
+    });
+  });
+
+  it('keeps a toggle successful when the post-create alarm read fails', async () => {
+    const alarms = new AlarmApi();
+    alarms.failOnGetCalls.add(2);
+    const storage = new SyncStorage();
+    storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY] = false;
+    const runtime = new DatabaseRuntime(managerStub(), daily(alarms, storage));
+
+    const response = await dispatch(runtime, { type: 'database.setAutoUpdate', enabled: true });
+
+    expect(response).toMatchObject({
+      ok: true,
+      status: {
+        autoUpdateEnabled: true,
+        nextScheduledCheckAt: null,
+      },
+    });
+    expect(storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY]).toBe(true);
+    expect(alarms.alarm?.periodInMinutes).toBe(DATABASE_DAILY_PERIOD_MINUTES);
+  });
+
+  it('keeps a disable successful without a fallible post-clear alarm read', async () => {
+    const alarms = new AlarmApi();
+    alarms.alarm = {
+      name: DATABASE_DAILY_ALARM_NAME,
+      scheduledTime: Date.parse('2026-08-25T00:00:00.000Z'),
+      periodInMinutes: DATABASE_DAILY_PERIOD_MINUTES,
+    };
+    alarms.failOnGetCalls.add(2);
+    const storage = new SyncStorage();
+    const runtime = new DatabaseRuntime(managerStub(), daily(alarms, storage));
+
+    const response = await dispatch(runtime, { type: 'database.setAutoUpdate', enabled: false });
+
+    expect(response).toMatchObject({
+      ok: true,
+      status: {
+        autoUpdateEnabled: false,
+        nextScheduledCheckAt: null,
+      },
+    });
+    expect(storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY]).toBe(false);
+    expect(alarms.alarm).toBeUndefined();
+    expect(alarms.getCalls).toBe(1);
+  });
+
+  it('uses a newly read disabled preference when the alarm status is unavailable after a check', async () => {
+    const alarms = new AlarmApi();
+    const storage = new SyncStorage();
+    const scheduler = daily(alarms, storage);
+    const manager = managerStub();
+    const runtime = new DatabaseRuntime(manager, scheduler);
+    runtime.rememberSchedule(await scheduler.reconcile());
+    storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY] = false;
+    alarms.getFails = 1;
+
+    const response = await dispatch(runtime, { type: 'database.check' });
+
+    expect(manager.check).toHaveBeenCalledTimes(1);
+    expect(response).toMatchObject({
+      ok: true,
+      status: {
+        autoUpdateEnabled: false,
+        nextScheduledCheckAt: null,
+      },
+    });
+    expect(alarms.getFails).toBe(0);
+  });
+
+  it('reads an initial preference before a restore and tolerates an unavailable alarm status', async () => {
+    const alarms = new AlarmApi();
+    alarms.get = async () => {
+      throw new Error('alarms.get failed');
+    };
+    const storage = new SyncStorage();
+    storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY] = false;
+    const manager = managerStub();
+    const runtime = new DatabaseRuntime(manager, daily(alarms, storage));
+
+    const response = await dispatch(runtime, { type: 'database.restore' });
+
+    expect(manager.restore).toHaveBeenCalledTimes(1);
+    expect(response).toMatchObject({
+      ok: true,
+      outcome: 'restored',
+      status: {
+        autoUpdateEnabled: false,
+        nextScheduledCheckAt: null,
+      },
+    });
+  });
+
+  it('does not start a check when no preference snapshot can be obtained', async () => {
+    const storage = new SyncStorage();
+    storage.get = async () => {
+      throw new Error('storage.sync.get failed');
+    };
+    const manager = managerStub();
+    const runtime = new DatabaseRuntime(manager, daily(new AlarmApi(), storage));
+
+    const response = await dispatch(runtime, { type: 'database.check' });
+
+    expect(manager.check).not.toHaveBeenCalled();
+    expect(response).toEqual({
+      ok: false,
+      code: 'network',
+      message: 'The database action failed.',
+    });
+  });
+
+  it('remembers a lifecycle reconciliation for a later successful mutation fallback', async () => {
+    const alarms = new AlarmApi();
+    const storage = new SyncStorage();
+    storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY] = false;
+    const inner = daily(alarms, storage);
+    let statusFails = false;
+    const scheduler = {
+      status: async () => {
+        if (statusFails) throw new Error('storage.sync.get failed');
+        return inner.status();
+      },
+      setEnabled: (enabled: boolean) => inner.setEnabled(enabled),
+      reconcile: () => inner.reconcile(),
+    };
+    const runtime = new DatabaseRuntime(managerStub(), scheduler);
+
+    expect(await runtime.reconcileSchedule()).toEqual({
+      autoUpdateEnabled: false,
+      nextScheduledCheckAt: null,
+    });
+    statusFails = true;
+
+    const response = await dispatch(runtime, { type: 'database.check' });
+    expect(response).toMatchObject({
+      ok: true,
+      status: {
+        autoUpdateEnabled: false,
+        nextScheduledCheckAt: null,
       },
     });
   });
@@ -291,10 +439,11 @@ describe('database runtime actions', () => {
 
   it('still fails alarm reconciliation and reports the persisted enable', async () => {
     const alarms = new AlarmApi();
+    const storage = new SyncStorage();
     alarms.create = vi.fn(() => {
+      storage.getFails = 1;
       throw new Error('create failed');
     });
-    const storage = new SyncStorage();
     storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY] = false;
     const scheduler = daily(alarms, storage);
     const runtime = new DatabaseRuntime(managerStub(), scheduler);
@@ -319,7 +468,7 @@ describe('database runtime actions', () => {
     });
   });
 
-  it('lets a status-only read fail without inventing a successful mutation', async () => {
+  it('returns a known preference when a status-only alarm read fails', async () => {
     const alarms = new AlarmApi();
     const storage = new SyncStorage();
     const scheduler = daily(alarms, storage);
@@ -332,9 +481,12 @@ describe('database runtime actions', () => {
     const response = await dispatch(runtime, { type: 'database.status' });
 
     expect(response).toEqual({
-      ok: false,
-      code: 'network',
-      message: 'The database action failed.',
+      ok: true,
+      status: {
+        ...managerStatus(),
+        autoUpdateEnabled: true,
+        nextScheduledCheckAt: null,
+      },
     });
   });
 });
