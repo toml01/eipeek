@@ -1,4 +1,10 @@
-import { classify, lookup, numberValidator } from '../core/dataset';
+import {
+  classify,
+  lookup,
+  numberValidator,
+  onDatabaseActivated,
+  refreshDatabaseIndex,
+} from '../core/dataset';
 import { blockAllowsBare, findMatches, parseSelection } from '../core/match';
 import { buildSegment, locate, partsCovering, type Segment } from '../core/segments';
 import {
@@ -285,6 +291,16 @@ async function start() {
     tooltip.hide(0);
     scan();
   });
+
+  // A tiny session-storage revision reaches existing content scripts without
+  // tabs permission. Swap the signed precomputed arrays, invalidate metadata/miss
+  // caches in the dataset layer, invalidate any in-flight tooltip lookup, and
+  // repaint against the new database.
+  onDatabaseActivated(() => {
+    tooltip.hide(0);
+    scan();
+  });
+  await refreshDatabaseIndex();
 
   injectStyle(settings);
   scan();

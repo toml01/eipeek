@@ -12,6 +12,7 @@
  * as an independent validator at the end of this script.
  */
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -20,6 +21,12 @@ import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import yaml from 'js-yaml';
+import {
+  DATABASE_SCHEMA_VERSION,
+  validateDatabasePayload,
+  validDatabaseVersion,
+} from '../src/core/database-artifact';
+import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../src/core/numbers.generated';
 
 const exec = promisify(execFile);
 
@@ -27,6 +34,9 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const CACHE = path.join(ROOT, '.cache');
 const OUT_JSON = path.join(ROOT, 'data', 'eips.json');
 const OUT_NUMBERS = path.join(ROOT, 'src', 'core', 'numbers.generated.ts');
+const OUT_DATABASE_PAYLOAD = path.join(ROOT, 'data', 'database.payload.json');
+const OUT_DATABASE_GENERATED = path.join(ROOT, 'src', 'core', 'database.generated.ts');
+const DATABASE_VERSION_FILE = path.join(ROOT, 'data', 'database-version.json');
 
 /** Maximum age for an alias targeting an open pull request. */
 export const DEFAULT_STALE_ALIAS_DAYS = 180;
@@ -173,6 +183,20 @@ function str(v: unknown): string {
   if (v == null) return '';
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   return String(v).trim();
+}
+
+/** Remote data only carries links that are safe to expose as clickable URLs. */
+function httpsUrlOrEmpty(v: unknown): string {
+  const value = str(v);
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password
+      ? value
+      : '';
+  } catch {
+    return '';
+  }
 }
 
 const UPGRADE_NAMES: Readonly<Record<string, string>> = {
@@ -1184,6 +1208,97 @@ export function isStaleOpenAlias(
   return Number.isFinite(opened) && now - opened >= thresholdDays * DAY_MS;
 }
 
+interface DatabaseVersionDocument {
+  schemaVersion: typeof DATABASE_SCHEMA_VERSION;
+  databaseVersion: number;
+  keyId: string;
+}
+
+async function readDatabaseVersion(): Promise<DatabaseVersionDocument> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(DATABASE_VERSION_FILE, 'utf8'));
+  } catch (error) {
+    throw new Error(
+      `Cannot read data/database-version.json: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('data/database-version.json must be an object');
+  }
+  const document = parsed as Record<string, unknown>;
+  const keys = Object.keys(document).sort();
+  const expected = ['databaseVersion', 'keyId', 'schemaVersion'];
+  if (keys.join('\0') !== expected.join('\0')) {
+    throw new Error('data/database-version.json must contain exactly schemaVersion, databaseVersion and keyId');
+  }
+  if (document.schemaVersion !== DATABASE_SCHEMA_VERSION) {
+    throw new Error(`data/database-version.json schemaVersion must be ${DATABASE_SCHEMA_VERSION}`);
+  }
+  if (!validDatabaseVersion(document.databaseVersion)) {
+    throw new Error('data/database-version.json databaseVersion must be a valid YYYYMMDDNN integer');
+  }
+  if (typeof document.keyId !== 'string' || !document.keyId) {
+    throw new Error('data/database-version.json keyId must be a non-empty string');
+  }
+  return document as unknown as DatabaseVersionDocument;
+}
+
+/**
+ * Emits the reviewable bytes that are signed and the tiny constants consumed by
+ * the bundled fallback. This is shared with `--payload-only`, which intentionally
+ * reads already-generated committed data and performs no upstream collection.
+ */
+async function writeDatabasePayload(
+  proposals: Proposal[],
+  mergedNumbers: number[],
+  unmergedNumbers: number[],
+): Promise<{ databaseVersion: number; payloadSha256: string }> {
+  const version = await readDatabaseVersion();
+  // A few open PRs use placeholders such as "TBD" in discussions-to. Keep the
+  // review dataset faithful to upstream, but runtime data carries only empty
+  // values or links that pass the strict HTTPS schema.
+  const runtimeProposals = proposals.map((proposal) => ({
+    ...proposal,
+    disc: httpsUrlOrEmpty(proposal.disc),
+  }));
+  const databasePayload = validateDatabasePayload({
+    schemaVersion: DATABASE_SCHEMA_VERSION,
+    databaseVersion: version.databaseVersion,
+    keyId: version.keyId,
+    proposals: runtimeProposals,
+    mergedNumbers,
+    unmergedNumbers,
+  });
+  const databasePayloadText = `${JSON.stringify(databasePayload, null, 2)}\n`;
+  const payloadSha256 = createHash('sha256').update(databasePayloadText).digest('hex');
+  await writeFile(OUT_DATABASE_PAYLOAD, databasePayloadText);
+  await writeFile(
+    OUT_DATABASE_GENERATED,
+    `// Generated by scripts/build-dataset.ts -- do not edit.\n` +
+      `/** Monotonic YYYYMMDDNN version of the bundled fallback database. */\n` +
+      `export const BUNDLED_DATABASE_VERSION = ${version.databaseVersion};\n` +
+      `/** SHA-256 of the exact UTF-8 bytes in data/database.payload.json. */\n` +
+      `export const BUNDLED_DATABASE_PAYLOAD_SHA256 = '${payloadSha256}';\n`,
+  );
+  return { databaseVersion: version.databaseVersion, payloadSha256 };
+}
+
+async function buildPayloadFromCommittedData(): Promise<void> {
+  log('Building signed-database payload from committed generated data (no network)');
+  const parsed = JSON.parse(await readFile(OUT_JSON, 'utf8')) as unknown;
+  if (!Array.isArray(parsed)) throw new Error('data/eips.json must contain a proposal array');
+  const result = await writeDatabasePayload(
+    parsed as Proposal[],
+    [...VALID_NUMBERS],
+    [...UNMERGED_NUMBERS],
+  );
+  log(
+    `  wrote data/database.payload.json v${result.databaseVersion} and generated digest ` +
+      `${result.payloadSha256.slice(0, 12)}…`,
+  );
+}
+
 async function main() {
   log('Building EIP/ERC dataset');
   const merged = await collect();
@@ -1231,12 +1346,6 @@ async function main() {
       (a.prOpened ?? '').localeCompare(b.prOpened ?? ''),
   );
 
-  await mkdir(path.dirname(OUT_JSON), { recursive: true });
-  // Keep the committed source reviewable. WXT/Vite minifies this JSON when it
-  // embeds the import in the production background bundle, so whitespace here
-  // does not increase the shipped extension size.
-  await writeFile(OUT_JSON, `${JSON.stringify(sorted, null, 2)}\n`);
-
   // Number-only indexes, inlined into the content script so that pages with no
   // EIP references never pull in the full metadata payload. Split by tier so the
   // "include open PRs" setting costs nothing at match time.
@@ -1244,6 +1353,12 @@ async function main() {
   const unmergedNums = [...new Set(unmerged.flatMap(numbersOf))]
     .filter((n) => !mergedNums.includes(n))
     .sort((a, b) => a - b);
+
+  await mkdir(path.dirname(OUT_JSON), { recursive: true });
+  // Keep committed data reviewable. WXT/Vite minifies the database payload when
+  // it embeds the import in the production background bundle, so whitespace here
+  // does not increase the shipped extension size.
+  await writeFile(OUT_JSON, `${JSON.stringify(sorted, null, 2)}\n`);
 
   await writeFile(
     OUT_NUMBERS,
@@ -1256,6 +1371,12 @@ async function main() {
       `/** Proposals that so far exist only in an open pull request. */\n` +
       `export const UNMERGED_NUMBERS: readonly number[] = [\n${chunk(unmergedNums)}\n];\n`,
   );
+  // The same collector emits the exact signed-database payload. The signature
+  // is deliberately a separate offline step (`npm run data:sign -- KEY`), so
+  // ordinary refreshes never need private key material. Runtime clients consume
+  // these precomputed arrays; they do not reconstruct replacement indexes from
+  // the proposal records.
+  const database = await writeDatabasePayload(sorted, mergedNums, unmergedNums);
 
   // Report the compact payload size, which is the form embedded by WXT/Vite.
   const bytes = Buffer.byteLength(JSON.stringify(sorted));
@@ -1265,6 +1386,10 @@ async function main() {
       `= ${sorted.length}, ${(bytes / 1024).toFixed(1)} KB minified payload)`,
   );
   log(`  wrote src/core/numbers.generated.ts (${mergedNums.length} + ${unmergedNums.length} numbers)`);
+  log(
+    `  wrote data/database.payload.json v${database.databaseVersion} and generated digest ` +
+      `${database.payloadSha256.slice(0, 12)}…`,
+  );
   if (aliased.length) log(`  ${aliased.length} proposal(s) carry aliases`);
   await rm(CACHE, { recursive: true, force: true });
 
@@ -1316,7 +1441,14 @@ function chunk(nums: number[]): string {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main().catch((err) => {
+  const args = process.argv.slice(2);
+  const command =
+    args.length === 0
+      ? main()
+      : args.length === 1 && args[0] === '--payload-only'
+        ? buildPayloadFromCommittedData()
+        : Promise.reject(new Error('Usage: npm run data:build [-- --payload-only]'));
+  command.catch((err) => {
     process.stderr.write(`${err instanceof Error ? err.stack : String(err)}\n`);
     process.exit(1);
   });

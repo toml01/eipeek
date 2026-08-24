@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Manual, signature-verified database updates from a fixed GitHub Contents API
+  endpoint, with atomic local activation and a permanent bundled fallback.
+- Database status, check, and restore controls in the shared popup/options UI.
+
 ## 0.2.1 - 2026-08-23
 
 ### Changed

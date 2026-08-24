@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "keyId": "eipeek-database-p256-2026-01",
+  "algorithm": "ECDSA_P256_SHA256",
+  "jwk": {
+    "kty": "EC",
+    "crv": "P-256",
+    "x": "tr_6TmrV9NdfqglHdacr6sOkxG-xR8aIAz1yAXoNwfc",
+    "y": "wFqyorZ5-LysiG22DShdtQuqMph8sbNlHgk57la9FzM",
+    "ext": true,
+    "key_ops": [
+      "verify"
+    ]
+  }
+}

@@ -8,10 +8,11 @@ to the spec, forum discussion, and source.
 
 > EIP-7702 → **EIP-7702** · Final · Core — Set Code for EOAs
 
-Covers **1194 merged proposals plus 214 that so far exist only in an open pull
+Covers **1195 merged proposals plus 218 that so far exist only in an open pull
 request**, across `ethereum/EIPs` and `ethereum/ERCs`, bundled with the extension.
 **No network requests are made while you browse** — the dataset is in the
-package, so the pages you read stay on your machine.
+package, so the pages you read stay on your machine. Database checks are manual:
+GitHub is contacted only after you click **Check for updates** in settings.
 
 Have feedback? [Open a GitHub issue](https://github.com/toml01/eipeek/issues/new?template=feedback.yml)
 for bugs, database corrections, feature requests, or general comments.
@@ -308,18 +309,59 @@ Pages with no references should cost nothing, so the data is split in two:
 | | Size | Where |
 | --- | --- | --- |
 | Number index | ~7 KB | inlined in the content script, for instant rejection |
-| Full metadata | 439 KB | background worker, fetched only after a match |
+| Full metadata | 443 KB | background worker, requested only after a match |
 
 The content script injected into every page is **~29 KB**. Metadata travels over
 `runtime.sendMessage` rather than `web_accessible_resources`, so there is no
 fetchable extension URL for a page to probe for.
 
+### Manual signed database updates
+
+The popup and options page have a **Database** section. Nothing checks
+automatically: startup, page scans, highlighting, and tooltip lookups use local
+data only. Clicking **Check for updates** makes one credentialless request from
+the background worker to the compile-time fixed GitHub REST Contents endpoint:
+
+`https://api.github.com/repos/toml01/eipeek/contents/data/database.signed.json?ref=main`
+
+The request asks for GitHub's documented `application/vnd.github.raw+json`
+representation, uses a 15-second timeout, omits credentials and referrer data,
+and relies on [GitHub REST's documented CORS support][github-cors]. No message can
+supply another URL, and there is no token in the extension.
+
+The downloaded file is data, not code. Its exact payload bytes must have a valid
+ECDSA P-256/SHA-256 signature from the public key bundled with EIPeek. P-256
+support predates the Chrome 102 minimum required for the storage access controls.
+Only after signature verification does the worker
+strictly validate the fixed schema, sizes, counts, proposal fields and HTTPS
+links, open-PR provenance, precomputed sorted number indexes, and monotonic
+`YYYYMMDDNN` version. A previously accepted version cannot be rolled back, and
+the same version cannot acquire different content.
+
+Verified bytes are staged in `chrome.storage.local`, which is restricted to
+trusted extension contexts. The worker rereads and reverifies the bytes, then
+activates them with a small atomic state-pointer update. The prior active slot
+remains untouched if anything fails. Downloaded bytes are reverified whenever
+the worker restarts. **Restore bundled database** immediately selects the
+permanent package fallback but deliberately retains the high-water version, so
+restoring cannot be used to authorize an older download.
+
+Activation is signalled with a revision-only value in `storage.session`, so
+existing content scripts can swap to the signed `mergedNumbers` and
+`unmergedNumbers` arrays without `tabs` permission. They clear metadata and miss
+caches, reject old in-flight replies, hide any open tooltip, and rescan. The
+large artifact never enters the page or content-script context; proposal
+metadata still travels only through `runtime.sendMessage`.
+
 ## The dataset
 
 `data/eips.json` is generated and committed; `data/aliases.json` is hand-written.
-Both are canonical pretty JSON so their diffs stay readable. WXT imports only
-`data/eips.json` and minifies it into the production `background.js` bundle;
-`data/aliases.json` and its maintenance reasons are not shipped.
+Both are canonical pretty JSON so their diffs stay readable. The same
+`data:build` collector also writes the reviewable `data/database.payload.json`
+with the precomputed merged/open-PR number arrays and generates its bundled
+version/digest constants. WXT imports that payload and minifies it into the
+production `background.js` bundle. `data/aliases.json`, its maintenance reasons,
+and the detached signed envelope are not copied into the extension package.
 
 For AI-supervised local maintenance, run:
 
@@ -345,11 +387,29 @@ The underlying commands remain available directly:
 ```sh
 npm run data:build   # needs GITHUB_TOKEN, or `gh auth login`
 npm run data:review  # advisory forum redirect check
+npm run data:verify  # verify the committed artifact with the public key
 ```
 
-The token is only for enumerating open pull requests: listing 756 PRs *with their
+The token is only for enumerating open pull requests: listing hundreds of PRs *with their
 file lists* needs GraphQL, and GraphQL always requires auth. Everything else in
 the build is unauthenticated.
+
+To publish a database update, increment the monotonic version in
+`data/database-version.json`, run the normal build/review workflow, review the
+payload diff, and sign it offline:
+
+```sh
+npm run data:sign -- .secrets/database-signing-private.pem
+npm run data:verify
+```
+
+`.secrets/` is gitignored and must never be staged. The initial private key is at
+`.secrets/database-signing-private.pem`; keep an encrypted offline backup. Losing
+the only copy requires a public-key rotation and a new extension release. The
+signer refuses an in-repository key that Git does not ignore, confirms the key
+matches `data/database-public-key.json`, and immediately verifies the artifact it
+writes. Signing is manual: no CI secret, API key, schedule, or second collector is
+introduced.
 
 The **GitHub repos are the source of truth for proposal metadata**, not
 `eips.ethereum.org`:
@@ -416,6 +476,7 @@ npm test            # unit tests (matcher + dataset integrity)
 npm run test:e2e    # drives a real browser; run `npm run build` first
 npm run compile     # type-check
 npm run data:build  # regenerate the dataset
+npm run data:verify # verify the committed signed database
 ```
 
 `npm run test:e2e` exists because the load-bearing behaviour cannot be tested in
@@ -434,7 +495,8 @@ both the hover screenshot and the packaged zip.
 
 ## Permissions
 
-`storage` only under `permissions` — for settings. No `tabs`, no
+`storage` only under `permissions` — for settings, verified downloaded database
+bytes, and the small activation signal. No `tabs`, no
 `web_accessible_resources`.
 
 The content script matches `<all_urls>`, which both Chrome and the Chrome Web
@@ -444,7 +506,8 @@ is narrow: it reads text nodes and paints highlights. `INPUT`, `TEXTAREA`,
 `SELECT`, `SCRIPT`, and `IFRAME` are among the skipped tags, so form fields and
 passwords are never read, and no page content is stored or transmitted. Settings
 go to `storage.sync`, so the browser copies them between your own signed-in
-devices. See [PRIVACY.md](PRIVACY.md).
+devices. Downloaded database data stays in `storage.local`. See
+[PRIVACY.md](PRIVACY.md).
 
 ## Known limitations
 
@@ -464,8 +527,9 @@ devices. See [PRIVACY.md](PRIVACY.md).
   [above](#references-split-across-elements).
 - **Chromium only.** `CSS.highlights` is needed for painting. A Firefox port is
   plausible since hover no longer depends on a Chrome-only API.
-- **Data goes stale between releases**, by design — the dataset is bundled so
-  that browsing triggers no network requests.
+- **Data can go stale until you check manually.** The package fallback is updated
+  with extension releases; signed database updates are never checked
+  automatically, so browsing still triggers no network requests.
 
 ## Performance
 
@@ -523,3 +587,4 @@ incremental rescanning is not worth the complexity yet.
 MIT
 
 [highlight]: https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API
+[github-cors]: https://docs.github.com/en/rest/using-the-rest-api/using-cors-and-jsonp-to-make-cross-origin-requests

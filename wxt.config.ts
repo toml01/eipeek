@@ -19,6 +19,12 @@ export default defineConfig({
   // browser reject the preload and log a misleading warning. The imports still
   // load normally for each page; only the speculative preload is removed.
   vite: () => ({
+    // WXT's storage helper contains a multiline diagnostic in a template
+    // literal. Lowering template literals makes esbuild escape those newlines,
+    // preserving the one-line production worker/dataset invariant.
+    esbuild: {
+      supported: { 'template-literal': false },
+    },
     build: {
       modulePreload: false,
       // The committed dataset stays pretty for review. Its JSON import is
@@ -33,6 +39,9 @@ export default defineConfig({
   publicDir: 'src/public',
   manifest: {
     name: 'EIPeek',
+    // storage.session and StorageArea.setAccessLevel are the database trust
+    // boundary and are both available starting in Chrome 102.
+    minimum_chrome_version: '102',
     description:
       'Highlights EIP/ERC references on any page. Hover for the full title, status, and links to the spec, discussion, and source.',
     permissions: ['storage'],

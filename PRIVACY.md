@@ -1,14 +1,16 @@
 # EIPeek — Privacy Policy
 
-**Effective date: 12 August 2026**
+**Effective date: 24 August 2026**
 
 EIPeek is a browser extension that highlights EIP and ERC references on the
 pages you read, and shows each proposal's title, status, and links in a hover
 card.
 
-**EIPeek sends no data anywhere.** It makes no network requests while you
-browse. There is no server, no analytics, no telemetry, no advertising, and no
-third party of any kind. Nothing you read is collected, recorded, or sold.
+**EIPeek makes no network requests while you browse.** There is no EIPeek
+server, analytics, telemetry, advertising, or automatic update check. Nothing
+you read is collected, recorded, or sold. The one optional request is a manual
+signed-database check described below; it happens only after you click **Check
+for updates**.
 
 ## Page content
 
@@ -64,8 +66,26 @@ extension. Removing the extension deletes them.
 ## The proposal data
 
 The EIP and ERC dataset — titles, statuses, categories, and links — is built
-before release and is included in the extension package. The extension reads it
-from your own disk, so it does not have to ask a server for anything.
+before release and is included in the extension package as a permanent fallback.
+The extension reads it from your own disk during normal browsing.
+
+If you click **Check for updates**, the background worker makes one request to a
+fixed public file in EIPeek's GitHub repository through the GitHub REST API. The
+request uses no login, cookie, token, or other credential. Like any web service,
+GitHub receives your IP address, request time, and standard HTTP request metadata
+such as the browser user agent and extension origin. GitHub handles that data
+under its own privacy policy.
+
+The request contains **no page content, page address, browsing history, selected
+text, or extension setting**. No current tab information is read or sent. The
+downloaded file contains proposal data only. EIPeek verifies its ECDSA P-256
+signature and strict schema before storing it in `chrome.storage.local` on that
+device. It is not synced to other devices and is never exposed to the pages you
+visit. A failed check leaves the active database unchanged. **Restore bundled
+database** selects the package copy again.
+
+There are no automatic checks on install, browser startup, worker startup, page
+load, scanning, highlighting, or tooltip use.
 
 ## Changes
 
@@ -74,6 +94,7 @@ effective date.
 
 ## Contact
 
-The extension's feedback link opens a GitHub issue form in a new tab. EIPeek
+The extension's feedback link opens a GitHub issue form in a new tab when you
+click it. EIPeek
 does not collect or send feedback itself; anything you submit is handled by
 GitHub under its own policies.

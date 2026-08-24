@@ -32,6 +32,10 @@ Run and supervise the repository's existing commands in the current checkout thr
 9. Run `npm run data:review` against the refreshed dataset. Inspect its text even when it exits zero: disagreements require evidence review, and `COULD NOT BE CHECKED` or `review failed` means the review is incomplete. Apply the same bounded transient retry policy. The review caches forum-confirmed matches in `.cache/review-forum.json` for 24 hours, so a retry after rate limiting resumes with only the unfinished entries; run `npm run data:review -- --no-cache` for a full re-check.
 10. Inspect the generated upgrade spot checks and the relationship counts printed by `data:build`. Confirm included upgrades precede scheduled ones, declined relationships remain absent, and ERC-4337 has no upgrade metadata.
 11. After any alias or upgrade-order edit, rerun `npm run data:build` and repeat evidence review until validation passes or a concrete blocker remains.
+12. Inspect `data/database.payload.json` against the payload bytes in the existing signed artifact. If the payload bytes changed, increment `data/database-version.json` to a new, never-used monotonic `YYYYMMDDNN` value, then rerun `npm run data:build -- --payload-only` (or the full collector if upstream inputs are not yet final). Never sign changed bytes at the old version.
+13. Review the complete generated payload and both precomputed number arrays. Inspect proposal, alias, upgrade, source URL, version, and digest changes before any private-key operation.
+14. In the offline signing environment run `npm run data:sign -- .secrets/database-signing-private.pem`. The signer must verify the existing committed artifact and reject a lower version or equal-version changed payload before overwrite. Do not stage, copy, or expose the private key.
+15. Run `npm run data:verify` and require it to verify the committed envelope signature and exact `data/database.payload.json` bytes with `data/database-public-key.json`.
 
 ## Validate and hand off
 
@@ -45,4 +49,4 @@ npm run test:e2e
 git diff --check
 ```
 
-Inspect `git diff -- data/aliases.json data/eips.json src/core/numbers.generated.ts` and the final `git status --short`. Leave a small, reviewable working-tree diff. Report changed paths, command results, evidence-backed alias decisions, and any incomplete upstream checks; do not commit or push.
+Inspect `git diff -- data/aliases.json data/eips.json data/database-version.json data/database.payload.json data/database.signed.json src/core/numbers.generated.ts src/core/database.generated.ts` and the final `git status --short`. Confirm the final artifact, version, and generated digest all describe the reviewed exact payload bytes. Leave a small, reviewable working-tree diff. Report changed paths, command results, evidence-backed alias decisions, and any incomplete upstream checks; do not commit or push.
