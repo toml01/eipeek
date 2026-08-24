@@ -1,11 +1,12 @@
 import proposals from '../../data/eips.json';
 import { BUNDLED_DATABASE_PAYLOAD_SHA256, BUNDLED_DATABASE_VERSION } from '../core/database.generated';
-import { DatabaseManager, DatabaseManagerError } from '../core/database-manager';
+import { DatabaseManager } from '../core/database-manager';
 import {
   DATABASE_AUTO_UPDATE_STORAGE_KEY,
   DatabaseAlarmScheduler,
   type DatabaseAlarm,
 } from '../core/database-alarm';
+import { DatabaseRuntime } from '../core/database-runtime';
 import { constructDatabasePayload } from '../core/database-payload';
 import { configureDatabaseStorageAccess } from '../core/database-storage-access';
 import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../core/numbers.generated';
@@ -144,20 +145,15 @@ export default defineBackground(() => {
     }
   });
 
+  const runtime = new DatabaseRuntime(manager, scheduler);
+
   // Reverify persisted downloaded bytes after every worker start. Initialization
   // reads local storage only and never calls fetch; network is exclusive to the
   // manual check or delivery of the matching daily alarm below.
-  void Promise.all([manager.initialize(), scheduler.reconcile()]).catch(() => {});
-
-  const combinedStatus = async () => ({
-    ...(await manager.status()),
-    ...(await scheduler.status()),
-  });
-
-  const combineActionStatus = async <T extends { status: unknown }>(response: T) => ({
-    ...response,
-    status: await combinedStatus(),
-  });
+  void Promise.all([
+    manager.initialize(),
+    scheduler.reconcile().then((status) => runtime.rememberSchedule(status)),
+  ]).catch(() => {});
 
   chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const request = parseRuntimeRequest(message);
@@ -182,34 +178,15 @@ export default defineBackground(() => {
         case 'database.getIndex':
           return manager.getNumberIndex();
         case 'database.status':
-          return { ok: true as const, status: await combinedStatus() };
         case 'database.check':
-          return combineActionStatus(await manager.checkForUpdates('manual'));
         case 'database.restore':
-          return combineActionStatus(await manager.restoreBundled());
         case 'database.setAutoUpdate':
-          await scheduler.setEnabled(request.enabled);
-          return { ok: true as const, status: await combinedStatus() };
+          return runtime.handle(request);
       }
     };
 
     void respond().then(sendResponse, async (error: unknown) => {
-      const normalized =
-        error instanceof DatabaseManagerError
-          ? error
-          : new DatabaseManagerError('network', 'The database action failed.');
-      let status;
-      try {
-        status = await combinedStatus();
-      } catch {
-        // The action error remains useful even if status construction fails.
-      }
-      sendResponse({
-        ok: false,
-        code: normalized.code,
-        message: normalized.message,
-        ...(status ? { status } : {}),
-      } satisfies DatabaseErrorResponse);
+      sendResponse(await runtime.errorResponse(error));
     });
 
     // Chrome ignores a returned Promise from MV3 onMessage. Keep the channel
