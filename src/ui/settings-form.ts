@@ -3,6 +3,7 @@ import { browser } from 'wxt/browser';
 import { DEFAULT_SETTINGS, type Settings } from '../core/types';
 import { FEEDBACK_ISSUE_URL } from '../core/feedback';
 import {
+  autoUpdateToggleView,
   isDatabaseUiChange,
   type DatabaseStatus,
   type DatabaseUiResponse,
@@ -404,23 +405,31 @@ export async function mountSettingsForm(root: HTMLElement): Promise<void> {
   databaseCheck.addEventListener('click', () => void databaseAction('database.check'));
   databaseRestore.addEventListener('click', () => void databaseAction('database.restore'));
   databaseAutoUpdate.addEventListener('change', () => {
-    const enabled = databaseAutoUpdate.checked;
-    setDatabaseBusy(true);
-    setDatabaseMessage(enabled ? 'Scheduling daily database checks…' : 'Disabling daily database checks…', 'busy');
-    void sendDatabaseMessage('database.setAutoUpdate', enabled)
-      .then((response) => {
+    void (async () => {
+      const enabled = databaseAutoUpdate.checked;
+      let receivedResponse = false;
+      setDatabaseBusy(true);
+      setDatabaseMessage(enabled ? 'Scheduling daily database checks…' : 'Disabling daily database checks…', 'busy');
+      try {
+        const response = await sendDatabaseMessage('database.setAutoUpdate', enabled);
+        receivedResponse = true;
+        const view = autoUpdateToggleView(enabled, response);
+        if (view.applyReturnedStatus && response?.status) renderDatabaseStatus(response.status);
+        else databaseAutoUpdate.checked = view.checked;
         if (!response?.ok) throw new Error(response?.message ?? 'The background worker did not respond.');
-        renderDatabaseStatus(response.status);
         setDatabaseMessage(
-          enabled ? 'Daily automatic database checks enabled.' : 'Daily automatic database checks disabled.',
+          view.checked
+            ? 'Daily automatic database checks enabled.'
+            : 'Daily automatic database checks disabled.',
           'success',
         );
-      })
-      .catch((error: unknown) => {
-        databaseAutoUpdate.checked = !enabled;
+      } catch (error: unknown) {
+        if (!receivedResponse) databaseAutoUpdate.checked = !enabled;
         setDatabaseMessage(error instanceof Error ? error.message : 'Could not change automatic checks.', 'error');
-      })
-      .finally(() => setDatabaseBusy(false));
+      } finally {
+        setDatabaseBusy(false);
+      }
+    })();
   });
 
   // A second open popup/options page may perform the action. The session event

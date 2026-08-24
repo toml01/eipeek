@@ -108,6 +108,36 @@ export interface DatabaseErrorResponse {
 
 export type DatabaseUiResponse = DatabaseActionResponse | DatabaseStatusResponse | DatabaseErrorResponse;
 
+export interface AutoUpdateToggleView {
+  checked: boolean;
+  nextCheck: 'Disabled' | 'Scheduling…' | 'scheduled';
+  applyReturnedStatus: boolean;
+}
+
+/**
+ * Preference is written before alarm create/clear. A failed reconciliation
+ * still returns that stored preference; the optimistic click is not source of
+ * truth. Revert the checkbox only when the worker omitted status.
+ */
+export function autoUpdateToggleView(
+  requestedEnabled: boolean,
+  response: DatabaseUiResponse | undefined,
+): AutoUpdateToggleView {
+  if (response?.status) {
+    const { autoUpdateEnabled, nextScheduledCheckAt } = response.status;
+    return {
+      checked: autoUpdateEnabled,
+      nextCheck: !autoUpdateEnabled ? 'Disabled' : nextScheduledCheckAt ? 'scheduled' : 'Scheduling…',
+      applyReturnedStatus: true,
+    };
+  }
+  return {
+    checked: !requestedEnabled,
+    nextCheck: requestedEnabled ? 'Disabled' : 'Scheduling…',
+    applyReturnedStatus: false,
+  };
+}
+
 /**
  * Narrows the global storage event to the one small cross-context signal. Local
  * database slots and state are deliberately not part of this protocol.

@@ -247,6 +247,47 @@ describe('daily database alarm', () => {
     expect(alarms.alarm).toBeUndefined();
   });
 
+  it('keeps a persisted enable when alarm creation fails', async () => {
+    const alarms = new AlarmApi();
+    alarms.create = vi.fn(() => {
+      throw new Error('create failed');
+    });
+    const storage = new SyncStorage();
+    storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY] = false;
+    const daily = scheduler(alarms, storage);
+
+    await expect(daily.setEnabled(true)).rejects.toThrow('create failed');
+
+    expect(storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY]).toBe(true);
+    expect(await daily.status()).toEqual({
+      autoUpdateEnabled: true,
+      nextScheduledCheckAt: null,
+    });
+  });
+
+  it('keeps a persisted disable when alarm clear fails', async () => {
+    const alarms = new AlarmApi();
+    alarms.alarm = {
+      name: DATABASE_DAILY_ALARM_NAME,
+      scheduledTime: Date.parse('2026-08-25T00:00:00.000Z'),
+      periodInMinutes: DATABASE_DAILY_PERIOD_MINUTES,
+    };
+    alarms.clear = vi.fn(async () => {
+      throw new Error('clear failed');
+    });
+    const storage = new SyncStorage();
+    const daily = scheduler(alarms, storage);
+
+    await expect(daily.setEnabled(false)).rejects.toThrow('clear failed');
+
+    expect(storage.values[DATABASE_AUTO_UPDATE_STORAGE_KEY]).toBe(false);
+    expect(await daily.status()).toEqual({
+      autoUpdateEnabled: false,
+      nextScheduledCheckAt: null,
+    });
+    expect(alarms.alarm?.name).toBe(DATABASE_DAILY_ALARM_NAME);
+  });
+
   it('recreates the schedule when re-enabled', async () => {
     const alarms = new AlarmApi();
     const storage = new SyncStorage();
