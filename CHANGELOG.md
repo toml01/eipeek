@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-08-24
+
 ### Added
 
 - Manual, signature-verified database updates from a fixed GitHub Contents API
@@ -16,6 +18,11 @@
 - Kept bundled database lookups working when older Chrome storage access-level
   calls reject, while disabling persistent database actions safely.
 - Preserved rollback protection across transient startup storage-read failures.
+
+### Changed
+
+- Made the signed database payload deterministic and compact, constructing it in
+  memory without committing a standalone payload file.
 
 ## 0.2.1 - 2026-08-23
 
