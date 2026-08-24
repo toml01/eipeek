@@ -1,8 +1,10 @@
-import bundledPayload from '../../data/database.payload.json';
+import proposals from '../../data/eips.json';
 import { BUNDLED_DATABASE_PAYLOAD_SHA256, BUNDLED_DATABASE_VERSION } from '../core/database.generated';
-import type { DatabasePayload } from '../core/database-artifact';
 import { DatabaseManager, DatabaseManagerError } from '../core/database-manager';
+import { constructDatabasePayload } from '../core/database-payload';
 import { configureDatabaseStorageAccess } from '../core/database-storage-access';
+import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../core/numbers.generated';
+import type { Proposal } from '../core/types';
 import {
   DATABASE_ACTIVATION_STORAGE_KEY,
   isDatabaseMutationRequest,
@@ -52,26 +54,34 @@ const chromeApi = (globalThis as typeof globalThis & {
  * content scripts receive only precomputed number arrays and requested records.
  */
 export default defineBackground(() => {
-  // Do this before initialization or any message can reach persistent storage.
-  // local holds large signed artifacts and is trusted-only; session exposes only
-  // the tiny revision signal used to wake existing content scripts/settings UIs.
-  const storageReady = configureDatabaseStorageAccess(chromeApi.storage).catch(() => {
-    throw new DatabaseManagerError('storage', 'Secure database storage is unavailable in this browser.');
+  // Attempt this before any persistent operation. On Chrome versions where the
+  // access-level API is absent or rejects, the adapters below never touch that
+  // storage area; bundled lookups remain available without weakening isolation.
+  const storageAccess = configureDatabaseStorageAccess(chromeApi.storage);
+  const payload = constructDatabasePayload({
+    databaseVersion: BUNDLED_DATABASE_VERSION,
+    proposals: proposals as Proposal[],
+    mergedNumbers: VALID_NUMBERS,
+    unmergedNumbers: UNMERGED_NUMBERS,
   });
-  const payload = bundledPayload as DatabasePayload;
-  if (payload.databaseVersion !== BUNDLED_DATABASE_VERSION) {
-    throw new Error('Bundled database payload/version mismatch');
-  }
 
   const manager = new DatabaseManager({
     storage: {
-      get: async (keys) => chromeApi.storage.local.get(keys),
-      set: async (values) => chromeApi.storage.local.set(values),
+      get: async (keys) => {
+        if (!(await storageAccess).local) throw new Error('trusted local storage unavailable');
+        return chromeApi.storage.local.get(keys);
+      },
+      set: async (values) => {
+        if (!(await storageAccess).local) throw new Error('trusted local storage unavailable');
+        return chromeApi.storage.local.set(values);
+      },
     },
     bundledPayload: payload,
     bundledPayloadDigest: BUNDLED_DATABASE_PAYLOAD_SHA256,
     notifyActivation: async (signal) => {
-      if (!chromeApi.storage.session) throw new Error('storage.session unavailable');
+      if (!(await storageAccess).session || !chromeApi.storage.session) {
+        throw new Error('untrusted session activation channel unavailable');
+      }
       await chromeApi.storage.session.set({ [DATABASE_ACTIVATION_STORAGE_KEY]: signal });
     },
   });
@@ -79,7 +89,7 @@ export default defineBackground(() => {
   // Reverify persisted downloaded bytes after every worker start. Initialization
   // reads local storage only and never calls fetch; network is exclusive to the
   // explicit database.check message below.
-  void storageReady.then(() => manager.initialize()).catch(() => {});
+  void manager.initialize().catch(() => {});
 
   chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const request = parseRuntimeRequest(message);
@@ -98,7 +108,6 @@ export default defineBackground(() => {
     }
 
     const respond = async () => {
-      await storageReady;
       switch (request.type) {
         case 'lookup':
           return manager.lookup(request.numbers, request.revision);
@@ -120,11 +129,9 @@ export default defineBackground(() => {
           : new DatabaseManagerError('network', 'The database action failed.');
       let status;
       try {
-        await storageReady;
         status = await manager.status();
       } catch {
-        // Never touch local storage when its trusted-only boundary could not be
-        // established. The error response remains useful without status.
+        // The action error remains useful even if status construction fails.
       }
       sendResponse({
         ok: false,

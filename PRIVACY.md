@@ -84,6 +84,12 @@ device. It is not synced to other devices and is never exposed to the pages you
 visit. A failed check leaves the active database unchanged. **Restore bundled
 database** selects the package copy again.
 
+The worker uses persistent database storage only after Chrome confirms it is
+restricted to trusted extension contexts. If that access-level operation is not
+supported or is rejected, bundled proposal lookups continue locally while
+database update and restore actions fail safely without reading or writing that
+storage area.
+
 There are no automatic checks on install, browser startup, worker startup, page
 load, scanning, highlighting, or tooltip use.
 

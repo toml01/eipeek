@@ -123,6 +123,8 @@ export class DatabaseManager {
   private readonly timeoutMs: number;
   private readonly notifyActivation: (signal: DatabaseActivationSignal) => Promise<void>;
   private ready: Promise<void> | null = null;
+  /** False until a successful local read establishes the durable rollback floor. */
+  private durableStateKnown = false;
   private busy = false;
   private metadataIndex: Map<number, Proposal[]> | null = null;
   private state: StoredDatabaseState;
@@ -149,7 +151,20 @@ export class DatabaseManager {
 
   /** Revalidates persisted bytes. This method never performs a network request. */
   initialize(): Promise<void> {
-    if (!this.ready) this.ready = this.initializeOnce();
+    if (!this.ready) {
+      const attempt = this.initializeOnce();
+      this.ready = attempt;
+      // A failed storage read leaves bundled data usable, but the next call may
+      // retry. Mutations stay blocked until one attempt learns durable state.
+      void attempt.then(
+        () => {
+          if (!this.durableStateKnown && this.ready === attempt) this.ready = null;
+        },
+        () => {
+          if (this.ready === attempt) this.ready = null;
+        },
+      );
+    }
     return this.ready;
   }
 
@@ -183,6 +198,7 @@ export class DatabaseManager {
 
   async checkForUpdates(): Promise<DatabaseActionResponse> {
     await this.initialize();
+    this.requireDurableState();
     if (this.busy) throw new DatabaseManagerError('busy', 'Another database action is already running.');
     this.busy = true;
     let outcome: DatabaseActionResponse['outcome'];
@@ -217,6 +233,7 @@ export class DatabaseManager {
 
   async restoreBundled(): Promise<DatabaseActionResponse> {
     await this.initialize();
+    this.requireDurableState();
     if (this.busy) throw new DatabaseManagerError('busy', 'Another database action is already running.');
     this.busy = true;
     try {
@@ -267,8 +284,18 @@ export class DatabaseManager {
         ...DATABASE_SLOT_KEYS,
       ]);
     } catch {
-      return; // Bundled fallback remains active when local storage is unavailable.
+      // Do not replace the in-memory bundled fallback, but mark rollback state
+      // unknown. A later successful initialize attempt may recover it; update
+      // and restore operations fail closed in the meantime.
+      this.checkStatus = {
+        schemaVersion: STORAGE_SCHEMA_VERSION,
+        lastCheckedAt: null,
+        outcome: 'error',
+        message: 'Stored rollback-protection state is unavailable; database actions are disabled.',
+      };
+      return;
     }
+    this.durableStateKnown = true;
 
     const status = parseStoredStatus(stored[DATABASE_STATUS_STORAGE_KEY]);
     if (status) this.checkStatus = status;
@@ -458,6 +485,15 @@ export class DatabaseManager {
       throw new DatabaseManagerError(
         'version-conflict',
         `Rejected database ${version}: that version was previously accepted with different content.`,
+      );
+    }
+  }
+
+  private requireDurableState(): void {
+    if (!this.durableStateKnown) {
+      throw new DatabaseManagerError(
+        'storage',
+        'Stored rollback-protection state is unavailable; database actions are disabled.',
       );
     }
   }

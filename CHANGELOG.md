@@ -8,6 +8,12 @@
   endpoint, with atomic local activation and a permanent bundled fallback.
 - Database status, check, and restore controls in the shared popup/options UI.
 
+### Fixed
+
+- Kept bundled database lookups working when older Chrome storage access-level
+  calls reject, while disabling persistent database actions safely.
+- Preserved rollback protection across transient startup storage-read failures.
+
 ## 0.2.1 - 2026-08-23
 
 ### Changed

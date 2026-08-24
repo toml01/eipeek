@@ -1,6 +1,6 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import bundledPayloadJson from '../data/database.payload.json';
+import proposals from '../data/eips.json';
 import {
   DATABASE_ARTIFACT_SCHEMA_VERSION,
   DATABASE_SIGNATURE_ALGORITHM,
@@ -17,9 +17,18 @@ import {
   type DatabaseStorage,
 } from '../src/core/database-manager';
 import { BUNDLED_DATABASE_PAYLOAD_SHA256 } from '../src/core/database.generated';
+import { BUNDLED_DATABASE_VERSION } from '../src/core/database.generated';
+import { constructDatabasePayload } from '../src/core/database-payload';
 import { DatasetRuntime } from '../src/core/dataset-runtime';
+import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../src/core/numbers.generated';
+import type { Proposal } from '../src/core/types';
 
-const bundledPayload = bundledPayloadJson as DatabasePayload;
+const bundledPayload = constructDatabasePayload({
+  databaseVersion: BUNDLED_DATABASE_VERSION,
+  proposals: proposals as Proposal[],
+  mergedNumbers: VALID_NUMBERS,
+  unmergedNumbers: UNMERGED_NUMBERS,
+});
 const TEST_KEY_ID = 'database-manager-test-key';
 const keys = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const publicKey = keys.publicKey.export({ format: 'jwk' });
@@ -27,8 +36,13 @@ const publicKey = keys.publicKey.export({ format: 'jwk' });
 class MemoryStorage implements DatabaseStorage {
   values: Record<string, unknown> = {};
   failStateWrites = false;
+  failGets = 0;
 
   async get(requested: string[]): Promise<Record<string, unknown>> {
+    if (this.failGets > 0) {
+      this.failGets -= 1;
+      throw new Error('simulated storage read failure');
+    }
     return Object.fromEntries(
       requested
         .filter((key) => Object.hasOwn(this.values, key))
@@ -53,7 +67,7 @@ function makePayload(version: number, title = 'Signed update title'): DatabasePa
 }
 
 function signPayload(payload: DatabasePayload): string {
-  const bytes = Buffer.from(`${JSON.stringify(payload, null, 2)}\n`);
+  const bytes = Buffer.from(JSON.stringify(payload));
   const signature = sign('sha256', bytes, { key: keys.privateKey, dsaEncoding: 'ieee-p1363' });
   const envelope: SignedDatabaseEnvelope = {
     artifactSchemaVersion: DATABASE_ARTIFACT_SCHEMA_VERSION,
@@ -228,6 +242,35 @@ describe('manual database manager', () => {
       highWaterVersion: version,
     });
     expect(storage.values[slotKey]).toBeDefined();
+  });
+
+  it('reloads durable high-water state after a transient initial read failure before accepting updates', async () => {
+    const highVersion = bundledPayload.databaseVersion + 2;
+    await manager(storage, async () => response(signPayload(makePayload(highVersion)))).checkForUpdates();
+    storage.failGets = 1;
+    const fetcher = vi.fn(async () =>
+      response(signPayload(makePayload(bundledPayload.databaseVersion + 1, 'Lower update'))),
+    );
+    const restarted = manager(storage, fetcher);
+
+    expect(await restarted.status()).toMatchObject({
+      source: 'bundled',
+      lastCheckOutcome: 'error',
+    });
+    await expect(restarted.checkForUpdates()).rejects.toMatchObject({ code: 'rollback' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(await restarted.status()).toMatchObject({ highWaterVersion: highVersion });
+  });
+
+  it('fails update and restore closed while durable high-water storage remains unavailable', async () => {
+    storage.failGets = 10;
+    const fetcher = vi.fn<(url: string, init: RequestInit) => Promise<Response>>();
+    const database = manager(storage, fetcher);
+
+    expect(await database.getNumberIndex()).toMatchObject({ databaseVersion: bundledPayload.databaseVersion });
+    await expect(database.checkForUpdates()).rejects.toMatchObject({ code: 'storage' });
+    await expect(database.restoreBundled()).rejects.toMatchObject({ code: 'storage' });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('restores bundled data without lowering the high-water version', async () => {

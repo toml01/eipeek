@@ -66,9 +66,8 @@ for (const file of ['popup.html', 'options.html']) {
   }
 }
 
-// data/eips.json is pretty in git, but WXT/Vite embeds a compact JSON string in
-// the production service worker. aliases.json is maintenance-only and must not
-// be copied into the extension at all.
+// data/eips.json is pretty in git, but runtime construction and Vite produce a
+// compact service worker. Review-only source files must not be copied at all.
 const builtBackground = await readFile(path.join(EXT, 'background.js'), 'utf8');
 const compactBackground = builtBackground.endsWith('\n')
   ? builtBackground.slice(0, -1)
@@ -109,6 +108,7 @@ check(
     !Object.hasOwn(manifest, 'web_accessible_resources'),
 );
 const forbiddenDatabaseOutputs = new Set([
+  'aliases.json',
   'database.signed.json',
   'database.payload.json',
   'database-public-key.json',
@@ -269,7 +269,7 @@ try {
       `${extensionPage} shows bundled database status and both manual actions`,
       databaseUi.heading === 'Database' &&
         databaseUi.source === 'Bundled fallback' &&
-        databaseUi.version === '2026082401' &&
+        databaseUi.version === '2026082402' &&
         databaseUi.lastCheck === 'Never' &&
         databaseUi.checkText === 'Check for updates' &&
         databaseUi.checkDisabled === false &&
@@ -691,7 +691,7 @@ try {
     !shadowText.includes('Bundled fallback') &&
       !shadowText.includes('Downloaded and signature-verified') &&
       !shadowText.includes('Check for updates') &&
-      !shadowText.includes('2026082401'),
+      !shadowText.includes('2026082402'),
   );
 
   // --- 6b. explicit, fixed-URL database actions -------------------------
@@ -795,7 +795,7 @@ try {
     'valid signed response activates through the real settings UI',
     !!updateSuccess &&
       activatedUi.source === 'Downloaded and signature-verified' &&
-      activatedUi.version === '2026082401' &&
+      activatedUi.version === '2026082402' &&
       activatedUi.restoreDisabled === false &&
       activatedUi.role === 'status',
     JSON.stringify({ updateSuccess, activatedUi }),
@@ -817,7 +817,7 @@ try {
   );
   check(
     'concurrently open settings surface refreshes after activation',
-    concurrentActivatedUi?.version === '2026082401' && concurrentActivatedUi.restoreDisabled === false,
+    concurrentActivatedUi?.version === '2026082402' && concurrentActivatedUi.restoreDisabled === false,
     JSON.stringify(concurrentActivatedUi),
   );
   const contentStorageEvents = await evaluateInContentContext(
@@ -1128,7 +1128,7 @@ try {
         !t.includes('Bundled fallback') &&
         !t.includes('Downloaded and signature-verified') &&
         !t.includes('Check for updates') &&
-        !t.includes('2026082401'),
+        !t.includes('2026082402'),
     );
   } else {
     check('debug mode reports an unknown number', false, 'could not select');

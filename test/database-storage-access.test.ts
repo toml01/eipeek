@@ -6,18 +6,39 @@ describe('database storage trust boundary', () => {
     const local = vi.fn(async () => {});
     const session = vi.fn(async () => {});
 
-    await configureDatabaseStorageAccess({
+    await expect(configureDatabaseStorageAccess({
       local: { setAccessLevel: local },
       session: { setAccessLevel: session },
-    });
+    })).resolves.toEqual({ local: true, session: true });
 
     expect(local).toHaveBeenCalledWith({ accessLevel: 'TRUSTED_CONTEXTS' });
     expect(session).toHaveBeenCalledWith({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
   });
 
-  it('fails closed when either access-level API is unavailable', async () => {
-    await expect(configureDatabaseStorageAccess({ local: {}, session: {} })).rejects.toThrow(
-      'Secure database storage access levels are unavailable',
-    );
+  it('reports unsupported APIs without throwing so bundled operation can continue', async () => {
+    await expect(configureDatabaseStorageAccess({ local: {}, session: {} })).resolves.toEqual({
+      local: false,
+      session: false,
+    });
+  });
+
+  it('fails each rejected access boundary closed while preserving supported boundaries', async () => {
+    const rejected = vi.fn(async () => {
+      throw new Error('not supported by this Chrome version');
+    });
+    const supported = vi.fn(async () => {});
+
+    await expect(
+      configureDatabaseStorageAccess({
+        local: { setAccessLevel: rejected },
+        session: { setAccessLevel: supported },
+      }),
+    ).resolves.toEqual({ local: false, session: true });
+    await expect(
+      configureDatabaseStorageAccess({
+        local: { setAccessLevel: supported },
+        session: { setAccessLevel: rejected },
+      }),
+    ).resolves.toEqual({ local: true, session: false });
   });
 });
