@@ -896,13 +896,18 @@ try {
     'structuredClone(globalThis.__eipeekDatabaseStorageEvents)',
   );
   check(
-    'content listener receives only the small session activation signal, never local artifact changes',
+    'content listener receives only small session signals, never local artifact changes',
     Array.isArray(contentStorageEvents) &&
-      contentStorageEvents.length === 1 &&
-      contentStorageEvents[0].areaName === 'session' &&
-      JSON.stringify(contentStorageEvents[0].keys) ===
-        JSON.stringify(['eipeek.database.activation.v1']) &&
-      contentStorageEvents[0].bytes < 256,
+      contentStorageEvents.some((event) => event.keys.includes('eipeek.database.activation.v1')) &&
+      contentStorageEvents.every(
+        (event) =>
+          event.areaName === 'session' &&
+          event.keys.length === 1 &&
+          ['eipeek.database.activation.v1', 'eipeek.database.uiChange.v1'].includes(
+            event.keys[0],
+          ) &&
+          event.bytes < 256,
+      ),
     JSON.stringify(contentStorageEvents),
   );
   const requestHeaders = Object.fromEntries(
