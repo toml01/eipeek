@@ -103,6 +103,12 @@ but do not fetch. Page load, scanning, highlighting, hover, tooltip use, status
 display, and restore never fetch. Only delivery of the named daily alarm or an
 explicit manual check from an extension settings page can make these requests.
 
+The worker uses persistent database storage only after Chrome confirms it is
+restricted to trusted extension contexts. If that access-level operation is not
+supported or is rejected, bundled proposal lookups continue locally while
+database update and restore actions fail safely without reading or writing that
+storage area.
+
 ## Changes
 
 If this policy changes, the new version is published at this address, with a new

@@ -11,6 +11,12 @@
   schedule, a small fixed GitHub version hint, and the existing signed
   activation path, with an opt-out toggle and visible schedule/result status.
 
+### Fixed
+
+- Kept bundled database lookups working when older Chrome storage access-level
+  calls reject, while disabling persistent database actions safely.
+- Preserved rollback protection across transient startup storage-read failures.
+
 ## 0.2.1 - 2026-08-23
 
 ### Changed

@@ -39,8 +39,9 @@ export default defineConfig({
   publicDir: 'src/public',
   manifest: {
     name: 'EIPeek',
-    // storage.session and StorageArea.setAccessLevel are the database trust
-    // boundary and are both available starting in Chrome 102.
+    // storage.session and StorageArea.setAccessLevel were introduced in Chrome
+    // 102. Some older implementations reject access-level changes; runtime then
+    // keeps the bundled database but disables persistent database actions.
     minimum_chrome_version: '102',
     description:
       'Highlights EIP/ERC references on any page. Hover for the full title, status, and links to the spec, discussion, and source.',

@@ -364,8 +364,10 @@ links, open-PR provenance, precomputed sorted number indexes, and monotonic
 `YYYYMMDDNN` version. A previously accepted version cannot be rolled back, and
 the same version cannot acquire different content.
 
-Verified bytes are staged in `chrome.storage.local`, which is restricted to
-trusted extension contexts. The worker rereads and reverifies the bytes, then
+Verified bytes are staged in `chrome.storage.local` only after the browser
+confirms that area is restricted to trusted extension contexts. Chrome versions
+that omit or reject that access-level API keep the bundled database available
+but fail update and restore operations closed. The worker rereads and reverifies the bytes, then
 activates them with a small atomic state-pointer update. The prior active slot
 remains untouched if anything fails. Downloaded bytes are reverified whenever
 the worker restarts. **Restore bundled database** immediately selects the
@@ -382,12 +384,15 @@ metadata still travels only through `runtime.sendMessage`.
 ## The dataset
 
 `data/eips.json` is generated and committed; `data/aliases.json` is hand-written.
-Both are canonical pretty JSON so their diffs stay readable. The same
-`data:build` collector also writes the reviewable `data/database.payload.json`
-with the precomputed merged/open-PR number arrays and generates its bundled
-version/digest constants. WXT imports that payload and minifies it into the
-production `background.js` bundle. `data/aliases.json`, its maintenance reasons,
-and the detached signed envelope are not copied into the extension package.
+Both are canonical pretty JSON so their diffs stay readable. Build, sign, verify,
+and bundled-fallback paths deterministically construct the same validated runtime
+payload in memory from `data/eips.json`, the reviewed database version, and the
+generated merged/open-PR number arrays. Its exact bytes are compact UTF-8
+`JSON.stringify(value)` output; no standalone formatted or minified payload file
+exists. Only final derived proposal aliases (`aka`) and their generated index
+entries enter runtime data. Raw alias entries and reasons remain review-only.
+Neither `data/aliases.json` nor the detached signed envelope is copied into the
+extension package.
 
 For AI-supervised local maintenance, run:
 
@@ -422,7 +427,7 @@ the build is unauthenticated.
 
 To publish a database update, increment the monotonic version in
 `data/database-version.json`, run the normal build/review workflow, review the
-payload diff, and sign it offline:
+proposal and generated-index diffs, and sign the reconstructed bytes offline:
 
 ```sh
 npm run data:sign -- .secrets/database-signing-private.pem

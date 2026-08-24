@@ -1,8 +1,8 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import committedPayload from '../data/database.payload.json';
 import publicKeyDocument from '../data/database-public-key.json';
+import aliases from '../data/aliases.json';
 import proposals from '../data/eips.json';
 import {
   DATABASE_ARTIFACT_SCHEMA_VERSION,
@@ -17,21 +17,30 @@ import {
   type SignedDatabaseEnvelope,
 } from '../src/core/database-artifact';
 import {
+  constructDatabasePayload,
+  serializeDatabasePayload,
+} from '../src/core/database-payload';
+import {
   BUNDLED_DATABASE_PAYLOAD_SHA256,
   BUNDLED_DATABASE_VERSION,
 } from '../src/core/database.generated';
 import { UNMERGED_NUMBERS, VALID_NUMBERS } from '../src/core/numbers.generated';
 import type { Proposal } from '../src/core/types';
 
-const canonicalJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
-const payload = committedPayload as DatabasePayload;
+const reviewableJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+const payload = constructDatabasePayload({
+  databaseVersion: BUNDLED_DATABASE_VERSION,
+  proposals: proposals as Proposal[],
+  mergedNumbers: VALID_NUMBERS,
+  unmergedNumbers: UNMERGED_NUMBERS,
+});
 
 const testKeys = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const testPublicKey = testKeys.publicKey.export({ format: 'jwk' });
 const TEST_KEY_ID = 'test-database-key';
 
 function signedArtifact(value: unknown): string {
-  const payloadBytes = Buffer.from(canonicalJson(value));
+  const payloadBytes = Buffer.from(JSON.stringify(value));
   const signature = sign('sha256', payloadBytes, {
     key: testKeys.privateKey,
     dsaEncoding: 'ieee-p1363',
@@ -44,7 +53,7 @@ function signedArtifact(value: unknown): string {
     payload: payloadBytes.toString('base64'),
     signature: signature.toString('base64'),
   };
-  return canonicalJson(envelope);
+  return reviewableJson(envelope);
 }
 
 function testPayload(): DatabasePayload {
@@ -54,24 +63,26 @@ function testPayload(): DatabasePayload {
 }
 
 describe('committed signed database', () => {
-  it('has canonical reviewable inputs and a valid P-256 signature', async () => {
-    const rawPayload = readFileSync('data/database.payload.json', 'utf8');
+  it('reconstructs exact compact bytes from reviewable inputs and verifies their P-256 signature', async () => {
     const rawArtifact = readFileSync('data/database.signed.json', 'utf8');
     const rawPublicKey = readFileSync('data/database-public-key.json', 'utf8');
     const rawVersion = readFileSync('data/database-version.json', 'utf8');
 
-    expect(rawPayload).toBe(canonicalJson(JSON.parse(rawPayload)));
-    expect(rawArtifact).toBe(canonicalJson(JSON.parse(rawArtifact)));
-    expect(rawPublicKey).toBe(canonicalJson(JSON.parse(rawPublicKey)));
-    expect(rawVersion).toBe(canonicalJson(JSON.parse(rawVersion)));
+    const payloadBytes = serializeDatabasePayload(payload);
+    const payloadText = Buffer.from(payloadBytes).toString();
+
+    expect(payloadText).toBe(JSON.stringify(payload));
+    expect(rawArtifact).toBe(reviewableJson(JSON.parse(rawArtifact)));
+    expect(rawPublicKey).toBe(reviewableJson(JSON.parse(rawPublicKey)));
+    expect(rawVersion).toBe(reviewableJson(JSON.parse(rawVersion)));
 
     const verified = await verifySignedDatabase(rawArtifact);
-    expect(Buffer.from(verified.payloadBytes).toString()).toBe(rawPayload);
+    expect(Buffer.from(verified.payloadBytes)).toEqual(Buffer.from(payloadBytes));
     expect(verified.payload.databaseVersion).toBe(BUNDLED_DATABASE_VERSION);
     expect(verified.payload.schemaVersion).toBe(DATABASE_SCHEMA_VERSION);
     expect(verified.payload.keyId).toBe(DATABASE_KEY_ID);
     expect(verified.payloadSha256).toBe(BUNDLED_DATABASE_PAYLOAD_SHA256);
-    expect(createHash('sha256').update(rawPayload).digest('hex')).toBe(
+    expect(createHash('sha256').update(payloadBytes).digest('hex')).toBe(
       BUNDLED_DATABASE_PAYLOAD_SHA256,
     );
   });
@@ -89,7 +100,7 @@ describe('committed signed database', () => {
     expect(JSON.stringify(publicKeyDocument)).not.toMatch(/\b(?:d|privateKey)\b/);
   });
 
-  it('builds the payload from the committed proposals and precomputed number arrays', () => {
+  it('includes only final derived aliases from proposals and precomputed indexes', () => {
     const runtimeProposals = (proposals as Proposal[]).map((proposal) => ({
       ...proposal,
       disc: proposal.disc.startsWith('https://') ? proposal.disc : '',
@@ -97,12 +108,14 @@ describe('committed signed database', () => {
     expect(payload.proposals).toEqual(runtimeProposals);
     expect(payload.mergedNumbers).toEqual(VALID_NUMBERS);
     expect(payload.unmergedNumbers).toEqual(UNMERGED_NUMBERS);
+    const runtimeText = JSON.stringify(payload);
+    for (const alias of aliases) expect(runtimeText).not.toContain(alias.reason);
   });
 
   it('verifies exact signed bytes before attempting payload schema validation', async () => {
     const envelope = JSON.parse(readFileSync('data/database.signed.json', 'utf8'));
     envelope.payload = Buffer.from('{"schemaVersion":0}').toString('base64');
-    await expect(verifySignedDatabase(canonicalJson(envelope))).rejects.toMatchObject({
+    await expect(verifySignedDatabase(reviewableJson(envelope))).rejects.toMatchObject({
       code: 'invalid-signature',
     });
   });
@@ -126,6 +139,26 @@ describe('signed payload validation', () => {
       expectedKeyId: TEST_KEY_ID,
     });
     expect(verified.payload.databaseVersion).toBe(value.databaseVersion);
+  });
+
+  it('rejects a valid signature over non-compact equivalent JSON', async () => {
+    const value = testPayload();
+    const prettyBytes = Buffer.from(reviewableJson(value));
+    const signature = sign('sha256', prettyBytes, {
+      key: testKeys.privateKey,
+      dsaEncoding: 'ieee-p1363',
+    });
+    const artifact = reviewableJson({
+      artifactSchemaVersion: DATABASE_ARTIFACT_SCHEMA_VERSION,
+      keyId: TEST_KEY_ID,
+      algorithm: DATABASE_SIGNATURE_ALGORITHM,
+      payloadEncoding: 'base64',
+      payload: prettyBytes.toString('base64'),
+      signature: signature.toString('base64'),
+    });
+    await expect(
+      verifySignedDatabase(artifact, { publicKey: testPublicKey, expectedKeyId: TEST_KEY_ID }),
+    ).rejects.toMatchObject({ code: 'invalid-schema' });
   });
 
   it('rejects a correctly signed payload with an invalid schema', async () => {

@@ -8,7 +8,13 @@ import {
   validateDatabasePayload,
   verifySignedDatabase,
   type SignedDatabaseEnvelope,
+  type VerifiedDatabase,
 } from '../src/core/database-artifact';
+import { serializeDatabasePayload } from '../src/core/database-payload';
+import {
+  assertGeneratedDatabaseConstants,
+  reconstructCommittedDatabase,
+} from './database-payload';
 
 export function signedEnvelope(payloadBytes: Uint8Array, privateKey: KeyObject): SignedDatabaseEnvelope {
   const signature = sign('sha256', payloadBytes, {
@@ -43,33 +49,53 @@ export async function loadAndCheckPrivateKey(filename: string): Promise<KeyObjec
   return privateKey;
 }
 
-export async function validatePayloadFile(rawPayload: string): Promise<Uint8Array> {
+/** Validates that bytes are the one compact representation accepted at runtime. */
+export function validatePayloadBytes(payloadBytes: Uint8Array): Uint8Array {
+  let payloadText: string;
+  try {
+    payloadText = new TextDecoder('utf-8', { fatal: true }).decode(payloadBytes);
+  } catch {
+    throw new Error('The database payload is not valid UTF-8');
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawPayload);
+    parsed = JSON.parse(payloadText);
   } catch {
-    throw new Error('data/database.payload.json is not valid JSON');
+    throw new Error('The database payload is not valid JSON');
   }
-  const validated = validateDatabasePayload(parsed);
-  const canonical = `${JSON.stringify(validated, null, 2)}\n`;
-  if (canonical !== rawPayload) {
-    throw new Error('data/database.payload.json is not canonical; run npm run data:build');
+  const canonical = serializeDatabasePayload(validateDatabasePayload(parsed));
+  if (!Buffer.from(canonical).equals(Buffer.from(payloadBytes))) {
+    throw new Error('The database payload is not in compact deterministic format');
   }
-  return new TextEncoder().encode(rawPayload);
+  return payloadBytes;
 }
 
-export async function verifyDatabaseFiles(rawArtifact: string, rawPayload: string): Promise<{
+/** Verifies both authenticity and exact identity with reconstructed source bytes. */
+export async function verifyDatabaseBytes(
+  rawArtifact: string,
+  expectedPayloadBytes: Uint8Array,
+  verifier: (raw: string) => Promise<VerifiedDatabase> = verifySignedDatabase,
+): Promise<{
   databaseVersion: number;
   payloadSha256: string;
 }> {
-  const verified = await verifySignedDatabase(rawArtifact);
-  const payloadBytes = await validatePayloadFile(rawPayload);
+  const verified = await verifier(rawArtifact);
+  const payloadBytes = validatePayloadBytes(expectedPayloadBytes);
   if (!Buffer.from(verified.payloadBytes).equals(Buffer.from(payloadBytes))) {
-    throw new Error('data/database.signed.json does not contain data/database.payload.json exactly');
+    throw new Error('data/database.signed.json does not contain the exact payload reconstructed from committed sources');
   }
   const digest = createHash('sha256').update(payloadBytes).digest('hex');
   if (verified.payloadSha256 !== digest) throw new Error('database payload digest mismatch');
   return { databaseVersion: verified.payload.databaseVersion, payloadSha256: digest };
+}
+
+export async function verifyCommittedDatabaseFiles(rawArtifact: string): Promise<{
+  databaseVersion: number;
+  payloadSha256: string;
+}> {
+  const expected = await reconstructCommittedDatabase();
+  assertGeneratedDatabaseConstants(expected);
+  return verifyDatabaseBytes(rawArtifact, expected.payloadBytes);
 }
 
 /**
@@ -81,7 +107,10 @@ export async function assertSafeArtifactOverwrite(
   rawExistingArtifact: string,
   nextPayloadBytes: Uint8Array,
 ): Promise<void> {
-  const existing = await verifySignedDatabase(rawExistingArtifact);
+  // Permit inspection of the previously committed pretty-byte format solely so
+  // the one-way migration to compact bytes can retain rollback/equivocation
+  // checks. Runtime verification and the newly written artifact stay strict.
+  const existing = await verifySignedDatabase(rawExistingArtifact, { requireCompactPayload: false });
   let nextValue: unknown;
   try {
     nextValue = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(nextPayloadBytes));

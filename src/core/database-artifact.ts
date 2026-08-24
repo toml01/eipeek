@@ -77,6 +77,8 @@ export interface VerifyDatabaseOptions {
   publicKey?: JsonWebKey;
   expectedKeyId?: string;
   subtle?: SubtleCrypto;
+  /** Offline migration tooling may inspect an older, valid non-compact artifact. */
+  requireCompactPayload?: boolean;
 }
 
 /**
@@ -142,6 +144,15 @@ export async function verifySignedDatabase(
   }
 
   const payload = validateDatabasePayload(parsed, expectedKeyId);
+  // One logical database has one signed representation. This makes signatures,
+  // generated digests and source reconstruction compare byte-for-byte rather
+  // than accepting alternate whitespace or object-key orderings.
+  if (options.requireCompactPayload !== false && payloadText !== JSON.stringify(payload)) {
+    throw new DatabaseArtifactError(
+      'invalid-schema',
+      'The signed database payload is not in the required compact deterministic format.',
+    );
+  }
   const payloadSha256 = await sha256Hex(payloadBytes, subtle);
   return { payload, payloadBytes, payloadSha256 };
 }

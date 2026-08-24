@@ -9,21 +9,40 @@ export interface DatabaseStorageAreas {
   session?: AccessControlledStorageArea;
 }
 
+export interface DatabaseStorageAccess {
+  /** Safe to use only after TRUSTED_CONTEXTS was confirmed. */
+  local: boolean;
+  /** Safe to use as the content-script-visible revision channel. */
+  session: boolean;
+}
+
 /**
- * Establishes the database trust boundary before any persistent read or write.
- * Fail closed on an incompatible browser: using local storage with its default
- * content-script exposure would broadcast complete signed artifacts.
+ * Attempts to establish each storage boundary before that area is used.
+ * Chrome versions in the supported range can expose the method but reject its
+ * promise. Callers must not touch an area reported as false; this preserves the
+ * bundled database without exposing persistent artifacts under default access.
  */
-export async function configureDatabaseStorageAccess(storage: DatabaseStorageAreas): Promise<void> {
-  if (
-    typeof storage.local.setAccessLevel !== 'function' ||
-    !storage.session ||
-    typeof storage.session.setAccessLevel !== 'function'
-  ) {
-    throw new Error('Secure database storage access levels are unavailable');
-  }
-  await Promise.all([
-    storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' }),
-    storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }),
+export async function configureDatabaseStorageAccess(
+  storage: DatabaseStorageAreas,
+): Promise<DatabaseStorageAccess> {
+  const [local, session] = await Promise.all([
+    setAccessLevel(storage.local, 'TRUSTED_CONTEXTS'),
+    storage.session
+      ? setAccessLevel(storage.session, 'TRUSTED_AND_UNTRUSTED_CONTEXTS')
+      : Promise.resolve(false),
   ]);
+  return { local, session };
+}
+
+async function setAccessLevel(
+  area: AccessControlledStorageArea,
+  accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS',
+): Promise<boolean> {
+  if (typeof area.setAccessLevel !== 'function') return false;
+  try {
+    await area.setAccessLevel({ accessLevel });
+    return true;
+  } catch {
+    return false;
+  }
 }
