@@ -45,7 +45,9 @@ export class DatabaseAlarmScheduler {
   private readonly random: () => number;
   private readonly now: () => Date;
   private readonly notifyChange: () => Promise<void>;
-  private reconciliation: Promise<DatabaseAlarmStatus> | null = null;
+  // Writes, alarm mutations, and their status snapshots are one ordered stream.
+  // enqueue() also lets later requests proceed when an earlier request fails.
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(options: DatabaseAlarmSchedulerOptions) {
     this.alarms = options.alarms;
@@ -55,7 +57,11 @@ export class DatabaseAlarmScheduler {
     this.notifyChange = options.notifyChange ?? (async () => {});
   }
 
-  async status(): Promise<DatabaseAlarmStatus> {
+  status(): Promise<DatabaseAlarmStatus> {
+    return this.enqueue(() => this.readStatus());
+  }
+
+  private async readStatus(): Promise<DatabaseAlarmStatus> {
     const [enabled, alarm] = await Promise.all([this.isEnabled(), this.alarms.get(DATABASE_DAILY_ALARM_NAME)]);
     return {
       autoUpdateEnabled: enabled,
@@ -65,18 +71,15 @@ export class DatabaseAlarmScheduler {
     };
   }
 
-  async setEnabled(enabled: boolean): Promise<DatabaseAlarmStatus> {
-    await this.storage.set({ [DATABASE_AUTO_UPDATE_STORAGE_KEY]: enabled });
-    return this.reconcile();
+  setEnabled(enabled: boolean): Promise<DatabaseAlarmStatus> {
+    return this.enqueue(async () => {
+      await this.storage.set({ [DATABASE_AUTO_UPDATE_STORAGE_KEY]: enabled });
+      return this.reconcileOnce();
+    });
   }
 
   reconcile(): Promise<DatabaseAlarmStatus> {
-    if (!this.reconciliation) {
-      this.reconciliation = this.reconcileOnce().finally(() => {
-        this.reconciliation = null;
-      });
-    }
-    return this.reconciliation;
+    return this.enqueue(() => this.reconcileOnce());
   }
 
   private async reconcileOnce(): Promise<DatabaseAlarmStatus> {
@@ -92,11 +95,16 @@ export class DatabaseAlarmScheduler {
       });
     }
     await this.publishChange();
-    return this.status();
+    return this.readStatus();
   }
 
   async handleAlarm(alarm: DatabaseAlarm, check: () => Promise<unknown>): Promise<boolean> {
-    if (alarm.name !== DATABASE_DAILY_ALARM_NAME || !(await this.isEnabled())) return false;
+    // Serialize admission, not the network check: a prior disable prevents the
+    // check, while a check admitted before a later disable may finish normally.
+    if (
+      alarm.name !== DATABASE_DAILY_ALARM_NAME ||
+      !(await this.enqueue(() => this.isEnabled()))
+    ) return false;
     try {
       await check();
     } finally {
@@ -106,6 +114,15 @@ export class DatabaseAlarmScheduler {
       await this.reconcile();
     }
     return true;
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(operation);
+    this.queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   private async isEnabled(): Promise<boolean> {
