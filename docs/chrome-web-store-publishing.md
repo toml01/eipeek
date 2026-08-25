@@ -31,25 +31,53 @@ release and then waits at the protected environment; it never skips approval.
 
 ## 1. Create the dedicated Google Cloud identity
 
-A dedicated Google Cloud project is recommended so its trust and audit trail are
-isolated. No paid usage is expected from Workload Identity Federation, IAM, or the
-Chrome Web Store API. Google setup documentation can nevertheless require billing
-to be enabled: a billing account and payment method might have to be linked even
-though these APIs have no expected usage charge.
+The dedicated project and its federation are already configured. This is the
+authoritative record; use the commands below to audit it, or recreate an individual
+resource only if its audit shows that it is absent.
 
-In the Cloud console, create or select that project and open Cloud Shell. Replace
-only `PROJECT_ID` below. The commands create no service-account JSON key and grant
-the service account no project role.
+- Project ID: `eipeek-cws-publishing` (number `387257331685`)
+- Service account: `eipeek-cws-publisher@eipeek-cws-publishing.iam.gserviceaccount.com`
+- Workload Identity Pool: `eipeek-github`
+- Provider: `eipeek-cws`
+- Provider resource:
+  `projects/387257331685/locations/global/workloadIdentityPools/eipeek-github/providers/eipeek-cws`
+
+No billing account is currently linked. The required APIs are enabled without
+billing, so no charge setup was needed. The setup creates no service-account JSON
+key and grants the service account no Google Cloud project role.
+
+In Cloud Shell, set the recorded values and audit the existing resources:
 
 ```sh
 set -eu
 
-PROJECT_ID='REPLACE_WITH_DEDICATED_PROJECT_ID'
+PROJECT_ID='eipeek-cws-publishing'
+PROJECT_NUMBER='387257331685'
 POOL_ID='eipeek-github'
 PROVIDER_ID='eipeek-cws'
 SA_ID='eipeek-cws-publisher'
 SUBJECT='repo:toml01@7473870/eipeek@1323913771:environment:chrome-web-store'
+SA_EMAIL="${SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 
+gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)'
+gcloud billing projects describe "${PROJECT_ID}"
+gcloud services list --enabled --project="${PROJECT_ID}" \
+  --filter='config.name:(chromewebstore.googleapis.com iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com cloudresourcemanager.googleapis.com)' \
+  --format='value(config.name)'
+gcloud iam service-accounts describe "${SA_EMAIL}" --project="${PROJECT_ID}"
+gcloud iam workload-identity-pools describe "${POOL_ID}" \
+  --project="${PROJECT_ID}" --location='global'
+gcloud iam workload-identity-pools providers describe "${PROVIDER_ID}" \
+  --project="${PROJECT_ID}" --location='global' \
+  --workload-identity-pool="${POOL_ID}"
+gcloud iam service-accounts get-iam-policy "${SA_EMAIL}" \
+  --project="${PROJECT_ID}"
+```
+
+If a resource above does not exist, recreate only that resource with the matching
+command below. `gcloud services enable` is safe to rerun.
+
+```sh
 gcloud services enable \
   chromewebstore.googleapis.com \
   iam.googleapis.com \
@@ -57,10 +85,6 @@ gcloud services enable \
   sts.googleapis.com \
   cloudresourcemanager.googleapis.com \
   --project="${PROJECT_ID}"
-
-PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" \
-  --format='value(projectNumber)')"
-SA_EMAIL="${SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 gcloud iam service-accounts create "${SA_ID}" \
   --project="${PROJECT_ID}" \
@@ -78,12 +102,12 @@ gcloud iam workload-identity-pools providers create-oidc "${PROVIDER_ID}" \
   --display-name='EIPeek Chrome Web Store' \
   --issuer-uri='https://token.actions.githubusercontent.com' \
   --attribute-mapping='google.subject=assertion.sub,attribute.repository_id=assertion.repository_id,attribute.repository_owner_id=assertion.repository_owner_id' \
-  --attribute-condition="attribute.repository_owner_id == '7473870' && attribute.repository_id == '1323913771' && google.subject == '${SUBJECT}'"
+  --attribute-condition="assertion.repository_owner_id == '7473870' && assertion.repository_id == '1323913771' && assertion.sub == '${SUBJECT}'"
 
 gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
   --project="${PROJECT_ID}" \
   --role='roles/iam.workloadIdentityUser' \
-  --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/subject/${SUBJECT}" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository_id/1323913771" \
   --condition=None
 
 printf 'GCP_WORKLOAD_IDENTITY_PROVIDER=projects/%s/locations/global/workloadIdentityPools/%s/providers/%s\n' \
@@ -91,8 +115,10 @@ printf 'GCP_WORKLOAD_IDENTITY_PROVIDER=projects/%s/locations/global/workloadIden
 printf 'GCP_SERVICE_ACCOUNT=%s\n' "${SA_EMAIL}"
 ```
 
-The condition checks both immutable numeric claims—repository `1323913771` and
-owner `7473870`—and the exact post-July-15-2026 environment subject:
+The provider mapping is
+`google.subject=assertion.sub,attribute.repository_id=assertion.repository_id,attribute.repository_owner_id=assertion.repository_owner_id`.
+Its condition checks both immutable numeric claims—repository `1323913771` and
+owner `7473870`—and the exact environment subject:
 
 ```text
 repo:toml01@7473870/eipeek@1323913771:environment:chrome-web-store
@@ -100,8 +126,9 @@ repo:toml01@7473870/eipeek@1323913771:environment:chrome-web-store
 
 Do not broaden the condition to a repository name alone. Do not create or download
 a service-account key. The only IAM grant is
-`roles/iam.workloadIdentityUser` **on this service account** for the exact
-federated subject; the service account itself needs no Google Cloud project role.
+`roles/iam.workloadIdentityUser` **on this service account** for the
+repository-ID `principalSet`; the provider condition supplies the exact environment
+restriction. The service account itself needs no Google Cloud project role.
 These audits should return no user-managed key and no project-level role for it:
 
 ```sh
@@ -113,36 +140,36 @@ gcloud projects get-iam-policy "${PROJECT_ID}" \
   --format='table(bindings.role)'
 ```
 
-In **Chrome Web Store Developer Dashboard → Account**, add `SA_EMAIL` as the
-publisher's allowed service account. Chrome currently allows one service account
-per publisher. This association—not a Cloud project role—authorizes access to the
-publisher's items.
+**Pending manual step:** In **Chrome Web Store Developer Dashboard → Account**, add
+`SA_EMAIL` as the publisher's allowed service account. Chrome currently allows one
+service account per publisher. This association—not a Cloud project role—authorizes
+access to the publisher's items.
 
 ## 2. Protect the GitHub environment
 
-Create an environment named exactly `chrome-web-store` in repository settings.
+The `chrome-web-store` environment is configured in repository settings:
 
-1. Add required reviewer **@toml01**.
-2. Do **not** enable “Prevent self-review.” This repository has only one
+1. Required reviewer: **@toml01**.
+2. “Prevent self-review” is disabled. This repository has only one
    collaborator, so enabling it would make every deployment impossible.
-3. Disable administrator bypass (“Allow administrators to bypass configured
-   protection rules”) if that control is available.
-4. Restrict deployment branches/tags to `main` and version tags (`v*`) as needed.
-   Manual preflight runs should be started from `main`.
+3. Administrator bypass (“Allow administrators to bypass configured protection
+   rules”) is disabled.
+4. Deployment policies allow branch `main` and tags `v*`. Manual preflight runs
+   should be started from `main`.
 
 The only reviewer and the workflow initiator may therefore be the same person.
 GitHub's approval is still an explicit, audited pause, but it is not independent
 two-person approval. Add another trusted collaborator and enable prevent-self-review
 if independent approval becomes possible.
 
-Add these **environment variables**, not secrets:
+All four **environment variables** are configured; they are not secrets:
 
 | Variable | Value |
 | --- | --- |
 | `CWS_PUBLISHER_ID` | Copy the publisher ID from **Developer Dashboard → Publisher → Settings** into this variable |
 | `CWS_EXTENSION_ID` | `jeehadjadegokhcgmnnkdcenbpbolkll` |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/eipeek-github/providers/eipeek-cws` |
-| `GCP_SERVICE_ACCOUNT` | `eipeek-cws-publisher@PROJECT_ID.iam.gserviceaccount.com` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/387257331685/locations/global/workloadIdentityPools/eipeek-github/providers/eipeek-cws` |
+| `GCP_SERVICE_ACCOUNT` | `eipeek-cws-publisher@eipeek-cws-publishing.iam.gserviceaccount.com` |
 
 There are no GitHub secrets. The workflow requests a short-lived access token only
 after the environment gate. Read-only status uses the
@@ -152,7 +179,7 @@ after the environment gate. Read-only status uses the
 
 From **Actions → Chrome Web Store → Run workflow**, use the `main` branch.
 
-1. Read-only preflight: set tag `v0.3.0`, operation `status`, and leave
+1. Read-only preflight (not yet run): set tag `v0.3.0`, operation `status`, and leave
    confirmation empty. Approve the environment wait. This calls only API v2
    `fetchStatus`; it cannot upload or publish. Confirm that the report says public
    version `0.2.1`, with no warning, takedown, active submission, or ambiguous
