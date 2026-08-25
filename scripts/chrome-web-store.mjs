@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { appendFile, readFile, writeFile } from 'node:fs/promises';
-import { promisify } from 'node:util';
+import { appendFile, lstat, readFile, readdir, writeFile } from 'node:fs/promises';
+import { relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { inflateRawSync } from 'node:zlib';
 
-const execFileAsync = promisify(execFile);
 
 export const EXPECTED_REPOSITORY = 'toml01/eipeek';
 export const EXPECTED_REPOSITORY_ID = 1323913771;
@@ -39,8 +38,12 @@ const ITEM_STATES = new Set([
 ]);
 const UPLOAD_STATES = new Set(['SUCCEEDED', 'IN_PROGRESS', 'FAILED', 'NOT_FOUND']);
 const API_BASE = 'https://chromewebstore.googleapis.com';
-const MAX_ZIP_LIST_BYTES = 2 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
+const MAX_ZIP_ENTRY_BYTES = 64 * 1024 * 1024;
+const MAX_ZIP_TOTAL_BYTES = 256 * 1024 * 1024;
+const EOCD_SIGNATURE = 0x06054b50;
+const CENTRAL_SIGNATURE = 0x02014b50;
+const LOCAL_SIGNATURE = 0x04034b50;
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -151,6 +154,8 @@ export function validateReleaseRecord({ repository, repositoryRecord, release, t
     invariant(commit === legacy.commit, 'Legacy release commit changed');
     if (apiSha256 !== undefined) invariant(apiSha256 === legacy.sha256, 'Legacy API asset digest changed');
   } else {
+    invariant(release.immutable === true,
+      'Future GitHub releases must be immutable; enable immutable releases before publishing');
     invariant(apiSha256 !== undefined,
       'Future release assets must expose a GitHub SHA-256 digest; enable immutable releases before publishing');
   }
@@ -164,6 +169,7 @@ export function validateReleaseRecord({ repository, repositoryRecord, release, t
     assetName,
     apiSha256,
     pinnedSha256: legacy?.sha256,
+    immutable: release.immutable === true,
     tagObject,
     commit,
   };
@@ -296,11 +302,187 @@ export async function resolveGitHubRelease({
   return { ...metadata, sha256, manifest };
 }
 
-function validateZipEntry(entry) {
-  invariant(entry.length > 0 && !entry.includes('\\') && !entry.startsWith('/') && !/^[A-Za-z]:/.test(entry),
-    `Unsafe ZIP entry: ${entry}`);
-  const parts = entry.split('/');
-  invariant(parts.every((part) => part !== '..' && part !== '.'), `Unsafe ZIP traversal entry: ${entry}`);
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function normalizedFileName(name, label = 'ZIP entry') {
+  invariant(typeof name === 'string' && name.length > 0 && !name.includes('\\') && !name.startsWith('/')
+    && !/^[A-Za-z]:/.test(name) && !name.endsWith('/') && !/[\0-\x1f\x7f]/.test(name),
+  `Unsafe ${label}: ${String(name)}`);
+  const parts = name.split('/');
+  invariant(parts.every((part) => part.length > 0 && part !== '..' && part !== '.'),
+    `Unsafe ${label}: ${name}`);
+  return parts.map((part) => part.normalize('NFC')).join('/');
+}
+
+function decodeZipName(bytes, utf8) {
+  if (!utf8) invariant(bytes.every((byte) => byte >= 0x20 && byte <= 0x7e),
+    'ZIP entry names without the UTF-8 flag must be ASCII');
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('ZIP entry name is not valid UTF-8');
+  }
+}
+
+function findEndOfCentralDirectory(zipBytes) {
+  const minimum = Math.max(0, zipBytes.length - 65_557);
+  for (let offset = zipBytes.length - 22; offset >= minimum; offset -= 1) {
+    if (zipBytes.readUInt32LE(offset) === EOCD_SIGNATURE
+      && offset + 22 + zipBytes.readUInt16LE(offset + 20) === zipBytes.length) return offset;
+  }
+  throw new Error('Release ZIP has no valid end-of-central-directory record');
+}
+
+function entryIsDetectablyRegular(versionMadeBy, externalAttributes, name) {
+  const host = versionMadeBy >>> 8;
+  if (host === 3 || host === 19) {
+    const mode = externalAttributes >>> 16;
+    const type = mode & 0o170000;
+    invariant(type === 0 || type === 0o100000, `ZIP entry is not a regular file: ${name}`);
+  }
+  invariant((externalAttributes & 0x10) === 0, `ZIP entry is not a regular file: ${name}`);
+}
+
+export function parseZipFiles(zipBytes) {
+  invariant(Buffer.isBuffer(zipBytes) && zipBytes.length >= 22, 'Release ZIP bytes are invalid');
+  const eocd = findEndOfCentralDirectory(zipBytes);
+  const disk = zipBytes.readUInt16LE(eocd + 4);
+  const centralDisk = zipBytes.readUInt16LE(eocd + 6);
+  const diskEntries = zipBytes.readUInt16LE(eocd + 8);
+  const entryCount = zipBytes.readUInt16LE(eocd + 10);
+  const centralSize = zipBytes.readUInt32LE(eocd + 12);
+  const centralOffset = zipBytes.readUInt32LE(eocd + 16);
+  invariant(disk === 0 && centralDisk === 0 && diskEntries === entryCount, 'Multi-disk ZIP archives are not supported');
+  invariant(entryCount !== 0xffff && centralSize !== 0xffffffff && centralOffset !== 0xffffffff,
+    'ZIP64 release archives are not supported');
+  invariant(entryCount > 0, 'Release ZIP is empty');
+  invariant(centralOffset + centralSize === eocd, 'Release ZIP central directory bounds are invalid');
+
+  const files = new Map();
+  const dataRanges = [];
+  let totalSize = 0;
+  let offset = centralOffset;
+  for (let index = 0; index < entryCount; index += 1) {
+    invariant(offset + 46 <= eocd && zipBytes.readUInt32LE(offset) === CENTRAL_SIGNATURE,
+      'Release ZIP central directory is malformed');
+    const versionMadeBy = zipBytes.readUInt16LE(offset + 4);
+    const flags = zipBytes.readUInt16LE(offset + 8);
+    const method = zipBytes.readUInt16LE(offset + 10);
+    const expectedCrc = zipBytes.readUInt32LE(offset + 16);
+    const compressedSize = zipBytes.readUInt32LE(offset + 20);
+    const uncompressedSize = zipBytes.readUInt32LE(offset + 24);
+    const nameLength = zipBytes.readUInt16LE(offset + 28);
+    const extraLength = zipBytes.readUInt16LE(offset + 30);
+    const commentLength = zipBytes.readUInt16LE(offset + 32);
+    const startingDisk = zipBytes.readUInt16LE(offset + 34);
+    const externalAttributes = zipBytes.readUInt32LE(offset + 38);
+    const localOffset = zipBytes.readUInt32LE(offset + 42);
+    const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
+    invariant(nextOffset <= eocd, 'Release ZIP central directory entry exceeds its bounds');
+    invariant(startingDisk === 0, 'Multi-disk ZIP entries are not supported');
+    invariant((flags & ~0x0800) === 0, 'Encrypted or specially encoded ZIP entries are not supported');
+    invariant(method === 0 || method === 8, `Unsupported ZIP compression method ${method}`);
+    invariant(compressedSize !== 0xffffffff && uncompressedSize !== 0xffffffff && localOffset !== 0xffffffff,
+      'ZIP64 entries are not supported');
+    invariant(uncompressedSize <= MAX_ZIP_ENTRY_BYTES, 'Release ZIP entry exceeds the size limit');
+    totalSize += uncompressedSize;
+    invariant(totalSize <= MAX_ZIP_TOTAL_BYTES, 'Release ZIP contents exceed the total size limit');
+    const centralNameBytes = zipBytes.subarray(offset + 46, offset + 46 + nameLength);
+    const rawName = decodeZipName(centralNameBytes, (flags & 0x0800) !== 0);
+    const name = normalizedFileName(rawName);
+    invariant(!files.has(name), `Release ZIP contains duplicate normalized entry ${name}`);
+    entryIsDetectablyRegular(versionMadeBy, externalAttributes, name);
+
+    invariant(localOffset + 30 <= centralOffset && zipBytes.readUInt32LE(localOffset) === LOCAL_SIGNATURE,
+      `ZIP local header is invalid for ${name}`);
+    const localFlags = zipBytes.readUInt16LE(localOffset + 6);
+    const localMethod = zipBytes.readUInt16LE(localOffset + 8);
+    const localCrc = zipBytes.readUInt32LE(localOffset + 14);
+    const localCompressedSize = zipBytes.readUInt32LE(localOffset + 18);
+    const localUncompressedSize = zipBytes.readUInt32LE(localOffset + 22);
+    const localNameLength = zipBytes.readUInt16LE(localOffset + 26);
+    const localExtraLength = zipBytes.readUInt16LE(localOffset + 28);
+    const localNameStart = localOffset + 30;
+    const dataStart = localNameStart + localNameLength + localExtraLength;
+    const dataEnd = dataStart + compressedSize;
+    invariant(localFlags === flags && localMethod === method && localCrc === expectedCrc
+      && localCompressedSize === compressedSize && localUncompressedSize === uncompressedSize
+      && dataEnd <= centralOffset,
+      `ZIP local entry bounds are invalid for ${name}`);
+    const localName = decodeZipName(zipBytes.subarray(localNameStart, localNameStart + localNameLength),
+      (flags & 0x0800) !== 0);
+    invariant(localName === rawName, `ZIP local and central names differ for ${name}`);
+    invariant(!dataRanges.some(([start, end]) => localOffset < end && dataEnd > start),
+      `ZIP entries overlap at ${name}`);
+    dataRanges.push([localOffset, dataEnd]);
+
+    const compressed = zipBytes.subarray(dataStart, dataEnd);
+    let contents;
+    try {
+      contents = method === 0
+        ? Buffer.from(compressed)
+        : inflateRawSync(compressed, { maxOutputLength: Math.max(1, uncompressedSize) });
+    } catch (error) {
+      throw new Error(`Unable to decompress ZIP entry ${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    invariant(contents.length === uncompressedSize, `ZIP entry size is invalid for ${name}`);
+    invariant(crc32(contents) === expectedCrc, `ZIP entry checksum is invalid for ${name}`);
+    files.set(name, contents);
+    offset = nextOffset;
+  }
+  invariant(offset === eocd, 'Release ZIP central directory has unparsed data');
+  dataRanges.sort(([left], [right]) => left - right);
+  invariant(dataRanges[0][0] === 0
+    && dataRanges.every((range, index) => index === 0 || dataRanges[index - 1][1] === range[0])
+    && dataRanges.at(-1)[1] === centralOffset,
+  'Release ZIP contains unindexed or interleaved local data');
+  return files;
+}
+
+async function readDirectoryFiles(rootDirectory) {
+  const root = resolve(rootDirectory);
+  invariant((await lstat(root)).isDirectory(), 'Built extension path must be a directory');
+  const files = new Map();
+  async function visit(directory) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name, 'en'));
+    for (const entry of entries) {
+      const fullPath = resolve(directory, entry.name);
+      invariant(fullPath === root || fullPath.startsWith(`${root}${sep}`), 'Built extension path escaped its root');
+      if (entry.isDirectory()) {
+        await visit(fullPath);
+        continue;
+      }
+      invariant(entry.isFile(), `Built extension contains a non-regular entry: ${entry.name}`);
+      const name = normalizedFileName(relative(root, fullPath).split(sep).join('/'), 'built extension path');
+      invariant(!files.has(name), `Built extension contains duplicate normalized path ${name}`);
+      files.set(name, await readFile(fullPath));
+    }
+  }
+  await visit(root);
+  invariant(files.size > 0, 'Built extension directory is empty');
+  return files;
+}
+
+export async function compareZipToDirectory(zipPath, directoryPath) {
+  const archiveFiles = parseZipFiles(await readFile(zipPath));
+  const builtFiles = await readDirectoryFiles(directoryPath);
+  const archiveNames = [...archiveFiles.keys()].sort();
+  const builtNames = [...builtFiles.keys()].sort();
+  const missing = builtNames.filter((name) => !archiveFiles.has(name));
+  const extra = archiveNames.filter((name) => !builtFiles.has(name));
+  invariant(missing.length === 0 && extra.length === 0,
+    `Release ZIP tree differs from tagged build (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'})`);
+  const different = builtNames.filter((name) => !archiveFiles.get(name).equals(builtFiles.get(name)));
+  invariant(different.length === 0, `Release ZIP file bytes differ from tagged build: ${different.join(', ')}`);
+  return { fileCount: builtFiles.size };
 }
 
 export function validateManifest(manifest, expectedVersion) {
@@ -311,40 +493,23 @@ export function validateManifest(manifest, expectedVersion) {
   invariant(manifest.version === expectedVersion, 'Manifest version does not match the release tag');
   invariant(Array.isArray(manifest.permissions) && JSON.stringify(manifest.permissions) === JSON.stringify(['storage', 'alarms']),
     'Manifest permissions must be exactly storage and alarms');
-  invariant(!Object.hasOwn(manifest, 'host_permissions'), 'Manifest must not declare host_permissions');
-  invariant(!Object.hasOwn(manifest, 'web_accessible_resources'), 'Manifest must not declare web_accessible_resources');
+  for (const field of ['host_permissions', 'optional_permissions', 'optional_host_permissions',
+    'externally_connectable', 'web_accessible_resources']) {
+    invariant(!Object.hasOwn(manifest, field), `Manifest must not declare ${field}`);
+  }
   invariant(!manifest.permissions.includes('tabs'), 'Manifest must not request tabs');
   return manifest;
 }
 
 export async function readAndValidateZipManifest(zipPath, expectedVersion) {
   invariant(typeof zipPath === 'string' && zipPath.length > 0 && !zipPath.includes('\0'), 'ZIP path is invalid');
-  let listing;
-  try {
-    ({ stdout: listing } = await execFileAsync('unzip', ['-Z1', '--', zipPath], {
-      encoding: 'utf8',
-      maxBuffer: MAX_ZIP_LIST_BYTES,
-    }));
-  } catch (error) {
-    throw new Error(`Unable to list release ZIP: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const entries = listing.split(/\r?\n/).filter(Boolean);
-  invariant(entries.length > 0, 'Release ZIP is empty');
-  entries.forEach(validateZipEntry);
-  invariant(entries.filter((entry) => entry === 'manifest.json').length === 1,
-    'Release ZIP must contain exactly one root manifest.json');
-  let manifestText;
-  try {
-    ({ stdout: manifestText } = await execFileAsync('unzip', ['-p', '--', zipPath, 'manifest.json'], {
-      encoding: 'utf8',
-      maxBuffer: MAX_MANIFEST_BYTES,
-    }));
-  } catch (error) {
-    throw new Error(`Unable to read release manifest: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  const files = parseZipFiles(await readFile(zipPath));
+  invariant(files.has('manifest.json'), 'Release ZIP must contain exactly one root manifest.json');
+  const manifestBytes = files.get('manifest.json');
+  invariant(manifestBytes.length <= MAX_MANIFEST_BYTES, 'Release manifest exceeds the size limit');
   let manifest;
   try {
-    manifest = JSON.parse(manifestText);
+    manifest = JSON.parse(manifestBytes.toString('utf8'));
   } catch (error) {
     throw new Error(`Release manifest is invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -578,8 +743,8 @@ export async function publishToStore({
 
 function parseArguments(argv) {
   const [operation, ...rest] = argv;
-  invariant(['validate-release', 'status', 'publish'].includes(operation),
-    'Usage: chrome-web-store.mjs <validate-release|status|publish> [--key value]');
+  invariant(['validate-release', 'compare-release', 'status', 'publish'].includes(operation),
+    'Usage: chrome-web-store.mjs <validate-release|compare-release|status|publish> [--key value]');
   invariant(rest.length % 2 === 0, 'Every CLI option requires a value');
   const options = {};
   for (let index = 0; index < rest.length; index += 2) {
@@ -661,7 +826,18 @@ async function main(argv) {
       sha256: result.sha256,
       tagObject: result.tagObject,
       commit: result.commit,
+      immutable: result.immutable,
       manifestVersion: result.manifest.version,
+    });
+    return;
+  }
+
+  if (operation === 'compare-release') {
+    const result = await compareZipToDirectory(requireOption(options, 'artifact'), requireOption(options, 'build-directory'));
+    await appendSummary('Release provenance comparison', {
+      version: requireOption(options, 'version'),
+      filesCompared: result.fileCount,
+      result: 'all normalized paths and file bytes match',
     });
     return;
   }

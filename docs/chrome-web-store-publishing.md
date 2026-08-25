@@ -25,9 +25,10 @@ been explicitly approved.
 The workflow pins all facts above because this legacy release is mutable. For
 future versions, enable [GitHub immutable releases][github-immutable] before
 publishing the release. Create a draft, attach the one correctly named ZIP, then
-publish it. Future releases must use an annotated strict `vMAJOR.MINOR.PATCH` tag
-and expose GitHub's asset SHA-256 digest. A `release.published` event validates the
-release and then waits at the protected environment; it never skips approval.
+publish it. Future releases must use an annotated strict `vMAJOR.MINOR.PATCH` tag,
+have GitHub's `immutable` flag set, and expose GitHub's asset SHA-256 digest. A
+`release.published` event validates the release and then waits at the protected
+environment; it never skips approval.
 
 ## 1. Create the dedicated Google Cloud identity
 
@@ -187,7 +188,10 @@ From **Actions → Chrome Web Store → Run workflow**, use the `main` branch.
 2. Artifact preflight: set tag `v0.3.0`, operation `validate`, and leave
    confirmation empty. This needs neither Google authentication nor environment
    approval. It verifies GitHub IDs and pins, ZIP digest, root manifest, package
-   version, MV3, name, and exact permissions.
+   version, MV3, name, exact permissions, and absence of optional privilege
+   fields. It checks out the resolved release commit without persisted credentials,
+   installs and builds it under Node 22 without CWS or Google credentials, and
+   requires the normalized ZIP file tree and every file byte to equal that build.
 3. **Stop here until explicit approval to publish has been given.**
 4. Later, set tag `v0.3.0`, operation `publish`, and confirmation exactly
    `publish v0.3.0`. Then approve the `chrome-web-store` environment wait.

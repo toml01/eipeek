@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 // The production helper is intentionally plain Node ESM so Actions can run it
 // without installing dependencies.
@@ -11,12 +14,14 @@ const {
   EXPECTED_REPOSITORY,
   EXPECTED_REPOSITORY_ID,
   PUBLISH_REQUEST,
+  compareZipToDirectory,
   compareChromeVersions,
   decidePublishAction,
   deriveExtensionId,
   fetchStoreStatus,
   parseChromeVersion,
   parseReleaseTag,
+  parseZipFiles,
   publishToStore,
   requirePublishConfirmation,
   validateManifest,
@@ -50,6 +55,63 @@ function jsonResponse(body: unknown, statusCode = 200) {
     status: statusCode,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function crc32(bytes: Buffer) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function storedZip(entries: Array<{
+  name: string;
+  contents?: string | Buffer;
+  versionMadeBy?: number;
+  externalAttributes?: number;
+}>) {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let localOffset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name);
+    const contents = Buffer.from(entry.contents ?? entry.name);
+    const flags = name.some((byte) => byte > 0x7f) ? 0x0800 : 0;
+    const checksum = crc32(contents);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(flags, 6);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(contents.length, 18);
+    local.writeUInt32LE(contents.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    locals.push(local, name, contents);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(entry.versionMadeBy ?? 20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(flags, 8);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(contents.length, 20);
+    central.writeUInt32LE(contents.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(entry.externalAttributes ?? 0, 38);
+    central.writeUInt32LE(localOffset, 42);
+    centrals.push(central, name);
+    localOffset += local.length + name.length + contents.length;
+  }
+  const centralBytes = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralBytes.length, 12);
+  eocd.writeUInt32LE(localOffset, 16);
+  return Buffer.concat([...locals, centralBytes, eocd]);
 }
 
 describe('release and Chrome version validation', () => {
@@ -102,25 +164,45 @@ describe('release artifact invariants', () => {
     expect(result).toMatchObject({ releaseId: 375937330, assetId: 528076253, assetSize: 151532 });
   });
 
-  it('requires GitHub-provided digests for future releases', () => {
-    expect(() => validateReleaseRecord({
+  it('requires immutable future releases with GitHub-provided digests', () => {
+    const futureRelease = {
+      id: 400000000,
+      tag_name: 'v0.4.0',
+      draft: false,
+      prerelease: false,
+      published_at: '2026-09-01T00:00:00Z',
+      assets: [{
+        id: 600000000,
+        name: 'eipeek-0.4.0-chrome.zip',
+        size: 100,
+        state: 'uploaded',
+        digest: `sha256:${'3'.repeat(64)}`,
+      }],
+    };
+    const input = {
       repository: EXPECTED_REPOSITORY,
       repositoryRecord: {
         id: EXPECTED_REPOSITORY_ID,
         full_name: EXPECTED_REPOSITORY,
         owner: { id: EXPECTED_OWNER_ID },
       },
-      release: {
-        id: 400000000,
-        tag_name: 'v0.4.0',
-        draft: false,
-        prerelease: false,
-        published_at: '2026-09-01T00:00:00Z',
-        assets: [{ id: 600000000, name: 'eipeek-0.4.0-chrome.zip', size: 100, state: 'uploaded' }],
-      },
+      release: futureRelease,
       tag: 'v0.4.0',
       tagObject: '1'.repeat(40),
       commit: '2'.repeat(40),
+    };
+    expect(() => validateReleaseRecord(input)).toThrow(/immutable/);
+    expect(validateReleaseRecord({
+      ...input,
+      release: { ...futureRelease, immutable: true },
+    })).toMatchObject({ immutable: true, apiSha256: '3'.repeat(64) });
+    expect(() => validateReleaseRecord({
+      ...input,
+      release: {
+        ...futureRelease,
+        immutable: true,
+        assets: [{ ...futureRelease.assets[0], digest: undefined }],
+      },
     })).toThrow(/SHA-256 digest/);
   });
 
@@ -129,7 +211,52 @@ describe('release artifact invariants', () => {
     expect(validateManifest(manifest, '0.3.0')).toBe(manifest);
     expect(() => validateManifest({ ...manifest, permissions: ['storage', 'tabs'] }, '0.3.0')).toThrow(/exactly/);
     expect(() => validateManifest({ ...manifest, host_permissions: ['<all_urls>'] }, '0.3.0')).toThrow(/host_permissions/);
+    for (const field of ['optional_permissions', 'optional_host_permissions', 'externally_connectable',
+      'web_accessible_resources']) {
+      expect(() => validateManifest({ ...manifest, [field]: [] }, '0.3.0')).toThrow(field);
+    }
     expect(() => validateManifest({ ...manifest, version: '0.2.1' }, '0.3.0')).toThrow(/version/);
+  });
+
+  it('parses only unique, safe, regular ZIP file entries', () => {
+    expect([...parseZipFiles(storedZip([{ name: 'manifest.json', contents: '{}' }])).keys()])
+      .toEqual(['manifest.json']);
+    expect(() => parseZipFiles(storedZip([{ name: '../manifest.json' }]))).toThrow(/Unsafe/);
+    expect(() => parseZipFiles(storedZip([
+      { name: '\u00e9.txt' },
+      { name: 'e\u0301.txt' },
+    ]))).toThrow(/duplicate normalized/);
+    expect(() => parseZipFiles(storedZip([{
+      name: 'link',
+      versionMadeBy: (3 << 8) | 20,
+      externalAttributes: (0o120777 << 16) >>> 0,
+    }]))).toThrow(/not a regular file/);
+  });
+
+  it('compares normalized ZIP paths and every file byte with a built directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'eipeek-cws-'));
+    const build = join(root, 'build');
+    const archive = join(root, 'release.zip');
+    try {
+      await mkdir(join(build, 'nested'), { recursive: true });
+      await writeFile(join(build, 'manifest.json'), '{"version":"0.3.0"}');
+      await writeFile(join(build, 'nested', 'script.js'), 'trusted bytes');
+      await writeFile(archive, storedZip([
+        { name: 'nested/script.js', contents: 'trusted bytes' },
+        { name: 'manifest.json', contents: '{"version":"0.3.0"}' },
+      ]));
+      await expect(compareZipToDirectory(archive, build)).resolves.toEqual({ fileCount: 2 });
+
+      await writeFile(archive, storedZip([{ name: 'wrapper/manifest.json', contents: '{"version":"0.3.0"}' }]));
+      await expect(compareZipToDirectory(archive, build)).rejects.toThrow(/tree differs/);
+      await writeFile(archive, storedZip([
+        { name: 'nested/script.js', contents: 'different bytes' },
+        { name: 'manifest.json', contents: '{"version":"0.3.0"}' },
+      ]));
+      await expect(compareZipToDirectory(archive, build)).rejects.toThrow(/file bytes differ/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

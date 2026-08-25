@@ -51,6 +51,11 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
       - name: Validate exact GitHub release and package
         id: release
         shell: bash
@@ -78,6 +83,29 @@ jobs:
             args+=(--event-release-id "${EVENT_RELEASE_ID}")
           fi
           node scripts/chrome-web-store.mjs "${args[@]}"
+
+      - name: Check out validated release source separately
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.release.outputs.commit }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Build validated release source without publishing credentials
+        working-directory: release-source
+        run: |
+          npm ci
+          npm run build
+
+      - name: Compare release ZIP with exact tagged build
+        env:
+          ARTIFACT_PATH: ${{ runner.temp }}/eipeek-release.zip
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: >-
+          node scripts/chrome-web-store.mjs compare-release
+          --artifact "${ARTIFACT_PATH}"
+          --build-directory release-source/.output/chrome-mv3
+          --version "${RELEASE_VERSION}"
 
   status:
     name: Read Chrome Web Store status
