@@ -1,0 +1,230 @@
+name: Chrome Web Store
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact published release tag (for example, v0.3.0)
+        required: true
+        type: string
+      operation:
+        description: Read-only validation/status, or protected upload and publish
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+          - status
+          - publish
+      confirmation:
+        description: For publish only, type "publish <tag>" exactly
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chrome-web-store-publishing
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate immutable release inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      release_id: ${{ steps.release.outputs.release_id }}
+      asset_id: ${{ steps.release.outputs.asset_id }}
+      asset_size: ${{ steps.release.outputs.asset_size }}
+      sha256: ${{ steps.release.outputs.sha256 }}
+      tag_object: ${{ steps.release.outputs.tag_object }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - name: Check out trusted workflow helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Validate exact GitHub release and package
+        id: release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+          OPERATION: ${{ github.event_name == 'release' && 'publish' || inputs.operation }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EVENT_RELEASE_ID: ${{ github.event_name == 'release' && github.event.release.id || '' }}
+          ARTIFACT_PATH: ${{ runner.temp }}/eipeek-release.zip
+        run: |
+          set -euo pipefail
+          node --version
+          args=(
+            validate-release
+            --repository "${GITHUB_REPOSITORY}"
+            --tag "${RELEASE_TAG}"
+            --operation "${OPERATION}"
+            --artifact "${ARTIFACT_PATH}"
+          )
+          if [[ -n "${CONFIRMATION}" ]]; then
+            args+=(--confirmation "${CONFIRMATION}")
+          fi
+          if [[ -n "${EVENT_RELEASE_ID}" ]]; then
+            args+=(--event-release-id "${EVENT_RELEASE_ID}")
+          fi
+          node scripts/chrome-web-store.mjs "${args[@]}"
+
+  status:
+    name: Read Chrome Web Store status
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'status'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: chrome-web-store
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out trusted workflow helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Check environment configuration before authentication
+        shell: bash
+        env:
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          [[ "${CWS_PUBLISHER_ID}" == "42f46ef0-44f9-444b-a0f7-7d5d80bd336b" ]] || {
+            echo 'CWS_PUBLISHER_ID is missing or does not match EIPeek' >&2; exit 1;
+          }
+          [[ "${CWS_EXTENSION_ID}" == "jeehadjadegokhcgmnnkdcenbpbolkll" ]] || {
+            echo 'CWS_EXTENSION_ID is missing or does not match EIPeek' >&2; exit 1;
+          }
+          [[ "${GCP_WORKLOAD_IDENTITY_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]] || {
+            echo 'GCP_WORKLOAD_IDENTITY_PROVIDER is missing or invalid' >&2; exit 1;
+          }
+          [[ "${GCP_SERVICE_ACCOUNT}" =~ ^[a-z0-9-]+@[a-z0-9.-]+\.iam\.gserviceaccount\.com$ ]] || {
+            echo 'GCP_SERVICE_ACCOUNT is missing or invalid' >&2; exit 1;
+          }
+
+      - name: Authenticate keylessly for read-only status
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: false
+          token_format: access_token
+          access_token_lifetime: 900s
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore.readonly
+
+      - name: Fetch status without mutation
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+        run: >-
+          node scripts/chrome-web-store.mjs status
+          --publisher-id "${CWS_PUBLISHER_ID}"
+          --extension-id "${CWS_EXTENSION_ID}"
+
+  publish:
+    name: Protected upload and publish
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'publish')
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: chrome-web-store
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out trusted workflow helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Re-download and revalidate approved release asset
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ARTIFACT_PATH: ${{ runner.temp }}/eipeek-approved-release.zip
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_ID: ${{ needs.validate.outputs.release_id }}
+          ASSET_ID: ${{ needs.validate.outputs.asset_id }}
+          ASSET_SIZE: ${{ needs.validate.outputs.asset_size }}
+          SHA256: ${{ needs.validate.outputs.sha256 }}
+          TAG_OBJECT: ${{ needs.validate.outputs.tag_object }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          set -euo pipefail
+          node scripts/chrome-web-store.mjs validate-release \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${RELEASE_TAG}" \
+            --operation validate \
+            --artifact "${ARTIFACT_PATH}" \
+            --expected-release-id "${RELEASE_ID}" \
+            --expected-asset-id "${ASSET_ID}" \
+            --expected-asset-size "${ASSET_SIZE}" \
+            --expected-sha256 "${SHA256}" \
+            --expected-tag-object "${TAG_OBJECT}" \
+            --expected-commit "${RELEASE_COMMIT}"
+
+      - name: Check environment configuration before authentication
+        shell: bash
+        env:
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          [[ "${CWS_PUBLISHER_ID}" == "42f46ef0-44f9-444b-a0f7-7d5d80bd336b" ]] || {
+            echo 'CWS_PUBLISHER_ID is missing or does not match EIPeek' >&2; exit 1;
+          }
+          [[ "${CWS_EXTENSION_ID}" == "jeehadjadegokhcgmnnkdcenbpbolkll" ]] || {
+            echo 'CWS_EXTENSION_ID is missing or does not match EIPeek' >&2; exit 1;
+          }
+          [[ "${GCP_WORKLOAD_IDENTITY_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]] || {
+            echo 'GCP_WORKLOAD_IDENTITY_PROVIDER is missing or invalid' >&2; exit 1;
+          }
+          [[ "${GCP_SERVICE_ACCOUNT}" =~ ^[a-z0-9-]+@[a-z0-9.-]+\.iam\.gserviceaccount\.com$ ]] || {
+            echo 'GCP_SERVICE_ACCOUNT is missing or invalid' >&2; exit 1;
+          }
+
+      - name: Authenticate keylessly for publishing
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: false
+          token_format: access_token
+          access_token_lifetime: 1200s
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+
+      - name: Upload and submit for automatic publication after review
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          ARTIFACT_PATH: ${{ runner.temp }}/eipeek-approved-release.zip
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: >-
+          node scripts/chrome-web-store.mjs publish
+          --publisher-id "${CWS_PUBLISHER_ID}"
+          --extension-id "${CWS_EXTENSION_ID}"
+          --artifact "${ARTIFACT_PATH}"
+          --version "${RELEASE_VERSION}"
