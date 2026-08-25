@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { load as loadYaml } from 'js-yaml';
 import { describe, expect, it, vi } from 'vitest';
 // The production helper is intentionally plain Node ESM so Actions can run it
 // without installing dependencies.
@@ -14,11 +15,13 @@ const {
   EXPECTED_REPOSITORY,
   EXPECTED_REPOSITORY_ID,
   PUBLISH_REQUEST,
+  claimPublishAttempt,
   compareZipToDirectory,
   compareChromeVersions,
   decidePublishAction,
   deriveExtensionId,
   fetchStoreStatus,
+  formatAttemptMarker,
   parseChromeVersion,
   parseReleaseTag,
   parseZipFiles,
@@ -27,7 +30,9 @@ const {
   requireManualPublishTag,
   requirePublishConfirmation,
   validateManifest,
+  validateAttemptMarker,
   validatePublisherId,
+  validateReleaseEvent,
   validateReleaseRecord,
   verifyItemIdentity,
 } = chromeWebStore;
@@ -35,6 +40,16 @@ const {
 const PUBLISHER_ID = '00000000-0000-4000-8000-000000000000';
 const name = `publishers/${PUBLISHER_ID}/items/${EXPECTED_EXTENSION_ID}`;
 const deriveExpectedId = () => EXPECTED_EXTENSION_ID;
+const ATTEMPT = {
+  repository: EXPECTED_REPOSITORY,
+  tag: 'v0.3.0',
+  version: '0.3.0',
+  releaseId: 375937330,
+  assetId: 528076253,
+  commit: '1'.repeat(40),
+  sha256: '2'.repeat(64),
+  runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/123456`,
+};
 
 function revision(state: string, version: string) {
   return { state, distributionChannels: [{ deployPercentage: 100, crxVersion: version }] };
@@ -57,6 +72,21 @@ function jsonResponse(body: unknown, statusCode = 200) {
     status: statusCode,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function attemptIssue(number: number, marker = formatAttemptMarker(ATTEMPT), state = 'open') {
+  return {
+    number,
+    title: marker.title,
+    body: marker.body,
+    state,
+    html_url: `https://github.com/${EXPECTED_REPOSITORY}/issues/${number}`,
+  };
+}
+
+function expectOnlyGitHubRequests(fetchMock: ReturnType<typeof vi.fn>) {
+  expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+  for (const [url] of fetchMock.mock.calls) expect(String(url)).toMatch(/^https:\/\/api\.github\.com\//);
 }
 
 function crc32(bytes: Buffer) {
@@ -150,6 +180,12 @@ describe('release and Chrome version validation', () => {
     expect(() => parseReleaseTag('v0.3.0/asset')).toThrow(/strict/);
   });
 
+  it('excludes legacy v0.3.0 release events while accepting future numeric event IDs', () => {
+    expect(() => validateReleaseEvent('v0.3.0', '375937330')).toThrow(/excluded/);
+    expect(validateReleaseEvent('v0.4.0', '400000000')).toBe(400000000);
+    expect(() => validateReleaseEvent('v0.4.0', '1e3')).toThrow(/positive integer/);
+  });
+
   it('implements Chrome one-to-four component integer ordering', () => {
     expect(parseChromeVersion('1.2.3.65535')).toEqual([1, 2, 3, 65535]);
     expect(compareChromeVersions('1.2.1', '1.2')).toBe(1);
@@ -162,24 +198,127 @@ describe('release and Chrome version validation', () => {
 });
 
 describe('publishing workflow guards', () => {
-  it('puts an exact-SHA durable attempt marker between read-only planning and mutation', async () => {
+  it('puts the issue ledger between read-only planning and mutation with least privilege', async () => {
     const workflow = await readFile(new URL('../.github/workflows/chrome-web-store.yml', import.meta.url), 'utf8');
+    const document = loadYaml(workflow) as any;
     const plan = workflow.indexOf('- name: Plan from current store status without mutation');
-    const restore = workflow.indexOf('- name: Restore exact pre-mutation attempt marker');
-    const save = workflow.indexOf('- name: Save exact pre-mutation attempt marker');
-    const prove = workflow.indexOf('- name: Verify durable marker before mutation');
+    const ledger = workflow.indexOf('- name: Create and verify public pre-mutation attempt ledger');
     const mutate = workflow.indexOf('- name: Upload and submit for automatic publication after review');
-    expect([plan, restore, save, prove, mutate]).toEqual([...new Set([plan, restore, save, prove, mutate])]);
+    expect([plan, ledger, mutate]).toEqual([...new Set([plan, ledger, mutate])]);
     expect(plan).toBeGreaterThan(0);
-    expect(plan).toBeLessThan(restore);
-    expect(restore).toBeLessThan(save);
-    expect(save).toBeLessThan(prove);
-    expect(prove).toBeLessThan(mutate);
-    expect(workflow.match(/actions\/cache\/(?:restore|save)@0057852bfaa89a56745cba8c7296529d2fc39830/g))
-      .toHaveLength(3);
-    expect(workflow).toContain('key: cws-publish-attempt-${{ needs.validate.outputs.sha256 }}');
-    expect(workflow).toContain("inputs.operation == 'publish' && inputs.release_tag == 'v0.3.0'");
+    expect(plan).toBeLessThan(ledger);
+    expect(ledger).toBeLessThan(mutate);
+    expect(workflow).not.toContain('actions/cache');
+    expect(document.permissions).toEqual({ contents: 'read' });
+    expect(document.jobs.validate.permissions).toBeUndefined();
+    expect(document.jobs.status.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
+    expect(document.jobs.publish.permissions).toEqual({ contents: 'read', 'id-token': 'write', issues: 'write' });
+    expect(document.jobs.publish.environment).toBe('chrome-web-store');
     expect(workflow.slice(mutate, mutate + 150)).toContain("if: steps.plan.outputs.action == 'upload'");
+  });
+
+  it('keeps validation ref-independent but requires main for manual credentials and excludes legacy release events', async () => {
+    const workflow = await readFile(new URL('../.github/workflows/chrome-web-store.yml', import.meta.url), 'utf8');
+    const document = loadYaml(workflow) as any;
+    expect(document.jobs.validate.if).toBeUndefined();
+    expect(document.jobs.status.if).toContain("github.ref == 'refs/heads/main'");
+    expect(document.jobs.publish.if).toContain("github.ref == 'refs/heads/main'");
+    expect(document.jobs.publish.if).toContain("github.event.release.tag_name != 'v0.3.0'");
+    expect(document.jobs.publish.if).toContain("inputs.release_tag == 'v0.3.0'");
+  });
+});
+
+describe('durable publish attempt ledger', () => {
+  it('formats and validates a canonical injection-safe marker', () => {
+    const marker = formatAttemptMarker(ATTEMPT);
+    expect(validateAttemptMarker(marker.title, marker.body)).toEqual(marker.payload);
+    expect(marker.body).toContain('pre-mutation publish attempt');
+    expect(marker.body).toContain('administrator edit or deletion is the only bypass');
+    expect(() => formatAttemptMarker({ ...ATTEMPT, tag: 'v0.3.0\nissue' })).toThrow(/strict/);
+    expect(() => validateAttemptMarker(marker.title, `${marker.body}changed`)).toThrow(/not recognized/);
+  });
+
+  it('lists all issues, ignores pull requests, then creates and fetches the exact issue', async () => {
+    const marker = formatAttemptMarker(ATTEMPT);
+    const pullRequest = { ...attemptIssue(8, marker), pull_request: { url: 'https://api.github.com/pulls/8' } };
+    const created = attemptIssue(9, marker);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([pullRequest]))
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(jsonResponse(created));
+    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: fetchMock }))
+      .resolves.toMatchObject({ issueNumber: 9, issueUrl: created.html_url });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all&sort=created&direction=asc&per_page=100&page=1');
+    expect(fetchMock.mock.calls[1]![1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ title: marker.title, body: marker.body }),
+    });
+    expect(fetchMock.mock.calls[2]![0]).toMatch('/issues/9');
+    expectOnlyGitHubRequests(fetchMock);
+  });
+
+  it.each(['open', 'closed'])('blocks a prior %s marker without creating an issue', async (state) => {
+    const priorRunMarker = formatAttemptMarker({
+      ...ATTEMPT, runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/999`,
+    });
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([attemptIssue(4, priorRunMarker, state)]));
+    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: fetchMock }))
+      .rejects.toThrow(/already exists/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expectOnlyGitHubRequests(fetchMock);
+  });
+
+  it('paginates repository-wide issue history and finds an older marker', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({ number: index + 1, title: `Other issue ${index}` }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockResolvedValueOnce(jsonResponse([attemptIssue(101, undefined, 'closed')]));
+    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: fetchMock }))
+      .rejects.toThrow(/already exists/);
+    expect(fetchMock.mock.calls[1]![0]).toContain('page=2');
+    expectOnlyGitHubRequests(fetchMock);
+  });
+
+  it('stops on issue-list and issue-verification errors', async () => {
+    const listFailure = vi.fn().mockResolvedValueOnce(jsonResponse({ message: 'forbidden' }, 403));
+    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: listFailure }))
+      .rejects.toThrow(/issue list failed with HTTP 403/);
+    expectOnlyGitHubRequests(listFailure);
+
+    const created = attemptIssue(12);
+    const verifyFailure = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(jsonResponse({ message: 'unavailable' }, 503));
+    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: verifyFailure }))
+      .rejects.toThrow(/verification failed with HTTP 503/);
+    expectOnlyGitHubRequests(verifyFailure);
+  });
+
+  it('stops on create errors, timeouts, and malformed success responses', async () => {
+    const createError = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ message: 'denied' }, 403));
+    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: createError }))
+      .rejects.toThrow(/creation failed with HTTP 403/);
+    expectOnlyGitHubRequests(createError);
+
+    const createTimeout = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockImplementationOnce(() => new Promise(() => {}));
+    await expect(claimPublishAttempt({
+      ...ATTEMPT, token: 'github-token', fetchImpl: createTimeout, requestTimeoutMs: 5,
+    })).rejects.toThrow(/creation timed out/);
+    expectOnlyGitHubRequests(createTimeout);
+
+    const malformedCreate = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ number: 13, state: 'open' }, 201));
+    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: malformedCreate }))
+      .rejects.toThrow(/marker does not match/);
+    expect(malformedCreate).toHaveBeenCalledTimes(2);
+    expectOnlyGitHubRequests(malformedCreate);
   });
 });
 
@@ -604,6 +743,27 @@ describe('direct API operations', () => {
       fetchImpl: fetchMock,
       deriveId: deriveExpectedId,
     })).rejects.toThrow(/outcome is unknown.*warnings/i);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('treats a testers-only publish response as an unknown mutation outcome', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(status()))
+      .mockResolvedValueOnce(jsonResponse({
+        name, itemId: EXPECTED_EXTENSION_ID, crxVersion: '0.3.0', uploadState: 'SUCCEEDED',
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        name, itemId: EXPECTED_EXTENSION_ID, state: 'PUBLISHED_TO_TESTERS',
+      }));
+    await expect(publishToStore({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      zipBytes: Buffer.from('zip'),
+      version: '0.3.0',
+      fetchImpl: fetchMock,
+      deriveId: deriveExpectedId,
+    })).rejects.toThrow(/outcome is unknown.*PUBLISHED_TO_TESTERS/i);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

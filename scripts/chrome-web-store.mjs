@@ -42,6 +42,20 @@ const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_ZIP_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_ZIP_TOTAL_BYTES = 256 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const ATTEMPT_MARKER_SCHEMA = 'eipeek-cws-publish-attempt/v1';
+const ATTEMPT_MARKER_TITLE_PREFIX = '[EIPeek CWS pre-mutation attempt v1] SHA-256 ';
+const ATTEMPT_MARKER_BODY_PREFIX = `<!-- ${ATTEMPT_MARKER_SCHEMA} -->
+# Chrome Web Store pre-mutation attempt ledger
+
+> **WARNING:** This public audit issue records a pre-mutation publish attempt. It does not prove the Chrome Web Store outcome. An explicit repository administrator edit or deletion is the only bypass, and requires Developer Dashboard verification first.
+
+\`\`\`json
+`;
+const ATTEMPT_MARKER_BODY_SUFFIX = `
+\`\`\`
+
+This issue is never updated or deleted automatically. A matching open or closed issue blocks another mutation attempt for the same release SHA-256.
+`;
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
@@ -111,6 +125,12 @@ function validateSha256(digest, label = 'SHA-256') {
 function validatePositiveId(value, label) {
   invariant(Number.isSafeInteger(value) && value > 0, `${label} must be a positive integer`);
   return value;
+}
+
+function parsePositiveId(value, label) {
+  if (typeof value === 'number') return validatePositiveId(value, label);
+  invariant(typeof value === 'string' && /^[1-9]\d*$/.test(value), `${label} must be a positive integer`);
+  return validatePositiveId(Number(value), label);
 }
 
 function expectedAssetName(version) {
@@ -239,6 +259,141 @@ async function githubJson(fetchImpl, url, token, label) {
   });
 }
 
+function validateRunUrl(runUrl, repository) {
+  invariant(typeof runUrl === 'string'
+    && new RegExp(`^https://github\\.com/${repository.replace('/', '\\/')}/actions/runs/[1-9]\\d*$`).test(runUrl),
+  'GitHub run URL is invalid');
+  return runUrl;
+}
+
+export function formatAttemptMarker({ repository, tag, version, releaseId, assetId, commit, sha256, runUrl }) {
+  validateRepositoryName(repository);
+  const tagVersion = parseReleaseTag(tag);
+  invariant(version === tagVersion, 'Release version does not match its tag');
+  const payload = {
+    schema: ATTEMPT_MARKER_SCHEMA,
+    repository,
+    releaseTag: tag,
+    releaseVersion: version,
+    releaseId: parsePositiveId(releaseId, 'Release ID'),
+    assetId: parsePositiveId(assetId, 'Asset ID'),
+    commit: validateSha(commit, 'Release commit'),
+    sha256: validateSha256(sha256),
+    runUrl: validateRunUrl(runUrl, repository),
+  };
+  return {
+    title: `${ATTEMPT_MARKER_TITLE_PREFIX}${payload.sha256}`,
+    body: `${ATTEMPT_MARKER_BODY_PREFIX}${JSON.stringify(payload, null, 2)}${ATTEMPT_MARKER_BODY_SUFFIX}`,
+    payload,
+  };
+}
+
+export function validateAttemptMarker(title, body) {
+  invariant(typeof title === 'string' && title.startsWith(ATTEMPT_MARKER_TITLE_PREFIX),
+    'Attempt ledger issue title is not recognized');
+  invariant(typeof body === 'string' && body.startsWith(ATTEMPT_MARKER_BODY_PREFIX)
+    && body.endsWith(ATTEMPT_MARKER_BODY_SUFFIX), 'Attempt ledger issue body is not recognized');
+  const json = body.slice(ATTEMPT_MARKER_BODY_PREFIX.length, -ATTEMPT_MARKER_BODY_SUFFIX.length);
+  let payload;
+  try {
+    payload = JSON.parse(json);
+  } catch {
+    throw new Error('Attempt ledger issue body has invalid JSON');
+  }
+  invariant(isRecord(payload) && Object.keys(payload).length === 9, 'Attempt ledger payload is invalid');
+  invariant(payload.schema === ATTEMPT_MARKER_SCHEMA, 'Attempt ledger schema is invalid');
+  const marker = formatAttemptMarker({
+    repository: payload.repository,
+    tag: payload.releaseTag,
+    version: payload.releaseVersion,
+    releaseId: payload.releaseId,
+    assetId: payload.assetId,
+    commit: payload.commit,
+    sha256: payload.sha256,
+    runUrl: payload.runUrl,
+  });
+  invariant(marker.title === title && marker.body === body, 'Attempt ledger issue is not in canonical form');
+  return marker.payload;
+}
+
+function validateAttemptIssue(issue, repository, marker, label, requireOpen = false) {
+  invariant(isRecord(issue) && !Object.hasOwn(issue, 'pull_request'), `${label} response is not a repository issue`);
+  const number = parsePositiveId(issue.number, `${label} issue number`);
+  invariant(issue.title === marker.title && issue.body === marker.body, `${label} issue marker does not match`);
+  invariant(issue.state === 'open' || (!requireOpen && issue.state === 'closed'), `${label} issue state is invalid`);
+  const issueUrl = `https://github.com/${repository}/issues/${number}`;
+  invariant(issue.html_url === issueUrl, `${label} issue URL does not match`);
+  validateAttemptMarker(issue.title, issue.body);
+  return { number, issueUrl };
+}
+
+async function githubIssueJson(fetchImpl, url, token, label, {
+  method = 'GET', body, requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+} = {}) {
+  const headers = githubHeaders(token);
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  return boundedRequest(fetchImpl, url, {
+    method,
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }, label, async (response) => {
+    if (!response.ok) throw await responseError(response, label);
+    try {
+      return await response.json();
+    } catch {
+      throw new Error(`${label} returned a non-JSON success response`);
+    }
+  }, requestTimeoutMs);
+}
+
+export async function claimPublishAttempt({
+  repository = EXPECTED_REPOSITORY,
+  tag,
+  version,
+  releaseId,
+  assetId,
+  commit,
+  sha256,
+  runUrl,
+  token,
+  fetchImpl = fetch,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+}) {
+  const marker = formatAttemptMarker({ repository, tag, version, releaseId, assetId, commit, sha256, runUrl });
+  const apiRoot = `https://api.github.com/repos/${repository}`;
+  for (let page = 1; ; page += 1) {
+    const issues = await githubIssueJson(fetchImpl,
+      `${apiRoot}/issues?state=all&sort=created&direction=asc&per_page=100&page=${page}`,
+      token, 'Attempt ledger issue list', { requestTimeoutMs });
+    invariant(Array.isArray(issues) && issues.length <= 100, 'Attempt ledger issue list response is invalid');
+    for (const issue of issues) {
+      if (!isRecord(issue) || Object.hasOwn(issue, 'pull_request') || issue.title !== marker.title) continue;
+      try {
+        validateAttemptMarker(issue.title, issue.body);
+      } catch (error) {
+        throw new Error(`Matching attempt ledger issue is malformed; refusing to mutate: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      throw new Error(`A pre-mutation attempt ledger already exists for SHA-256 ${marker.payload.sha256}; inspect the Developer Dashboard`);
+    }
+    if (issues.length < 100) break;
+  }
+
+  const created = await githubIssueJson(fetchImpl, `${apiRoot}/issues`, token, 'Attempt ledger issue creation', {
+    method: 'POST', body: { title: marker.title, body: marker.body }, requestTimeoutMs,
+  });
+  const creation = validateAttemptIssue(created, repository, marker, 'Created attempt ledger', true);
+  const fetched = await githubIssueJson(fetchImpl, `${apiRoot}/issues/${creation.number}`, token,
+    'Attempt ledger issue verification', { requestTimeoutMs });
+  const verified = validateAttemptIssue(fetched, repository, marker, 'Verified attempt ledger');
+  return { issueNumber: verified.number, issueUrl: verified.issueUrl, marker };
+}
+
+export function validateReleaseEvent(tag, eventReleaseId) {
+  parseReleaseTag(tag);
+  invariant(tag !== 'v0.3.0', 'The legacy v0.3.0 release event is excluded; use manual publish with exact confirmation');
+  return parsePositiveId(eventReleaseId, 'Event release ID');
+}
+
 async function resolveAnnotatedTag(fetchImpl, repository, token, tag) {
   const encodedTag = encodeURIComponent(tag);
   const reference = await githubJson(fetchImpl,
@@ -292,7 +447,7 @@ export async function resolveGitHubRelease({
   ]);
   const metadata = validateReleaseRecord({ repository, repositoryRecord, release, tag, ...resolvedTag });
   if (eventReleaseId !== undefined) {
-    invariant(metadata.releaseId === validatePositiveId(Number(eventReleaseId), 'Event release ID'),
+    invariant(metadata.releaseId === validateReleaseEvent(tag, eventReleaseId),
       'Release event ID does not match the resolved release');
   }
   for (const [key, value] of Object.entries(expected)) {
@@ -793,7 +948,7 @@ export async function publishToStore({
       }
     }, requestTimeoutMs);
     verifyItemIdentity(publish, publisherId, extensionId, 'publish');
-    invariant(['PENDING_REVIEW', 'PUBLISHED', 'PUBLISHED_TO_TESTERS'].includes(publish.state),
+    invariant(['PENDING_REVIEW', 'PUBLISHED'].includes(publish.state),
       `Publish returned unexpected state ${String(publish.state)}`);
     if (publish.warningInfo !== undefined) {
       invariant(isRecord(publish.warningInfo) && Array.isArray(publish.warningInfo.warnings),
@@ -809,8 +964,8 @@ export async function publishToStore({
 
 function parseArguments(argv) {
   const [operation, ...rest] = argv;
-  invariant(['validate-release', 'compare-release', 'status', 'plan', 'publish'].includes(operation),
-    'Usage: chrome-web-store.mjs <validate-release|compare-release|status|plan|publish> [--key value]');
+  invariant(['validate-release', 'compare-release', 'claim-attempt', 'status', 'plan', 'publish'].includes(operation),
+    'Usage: chrome-web-store.mjs <validate-release|compare-release|claim-attempt|status|plan|publish> [--key value]');
   invariant(rest.length % 2 === 0, 'Every CLI option requires a value');
   const options = {};
   for (let index = 0; index < rest.length; index += 2) {
@@ -905,6 +1060,30 @@ async function main(argv) {
       version: requireOption(options, 'version'),
       filesCompared: result.fileCount,
       result: 'all normalized paths and file bytes match',
+    });
+    return;
+  }
+
+  if (operation === 'claim-attempt') {
+    const result = await claimPublishAttempt({
+      repository: requireOption(options, 'repository'),
+      tag: requireOption(options, 'tag'),
+      version: requireOption(options, 'version'),
+      releaseId: requireOption(options, 'release-id'),
+      assetId: requireOption(options, 'asset-id'),
+      commit: requireOption(options, 'commit'),
+      sha256: requireOption(options, 'sha256'),
+      runUrl: requireOption(options, 'run-url'),
+      token: process.env.GITHUB_TOKEN,
+    });
+    await appendOutput({ issue_number: result.issueNumber, issue_url: result.issueUrl });
+    await appendSummary('Chrome Web Store pre-mutation attempt ledger', {
+      releaseTag: result.marker.payload.releaseTag,
+      releaseVersion: result.marker.payload.releaseVersion,
+      sha256: result.marker.payload.sha256,
+      issueNumber: result.issueNumber,
+      issueUrl: result.issueUrl,
+      warning: 'Pre-mutation attempt only; verify the Developer Dashboard before any administrator bypass.',
     });
     return;
   }

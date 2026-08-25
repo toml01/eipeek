@@ -109,7 +109,9 @@ jobs:
 
   status:
     name: Read Chrome Web Store status
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'status'
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      inputs.operation == 'status'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -175,8 +177,9 @@ jobs:
   publish:
     name: Protected upload and publish
     if: >-
-      github.event_name == 'release' ||
-      (github.event_name == 'workflow_dispatch' && inputs.operation == 'publish' && inputs.release_tag == 'v0.3.0')
+      (github.event_name == 'release' && github.event.release.tag_name != 'v0.3.0') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      inputs.operation == 'publish' && inputs.release_tag == 'v0.3.0')
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -184,6 +187,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      issues: write
     steps:
       - name: Check out trusted workflow helper
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -274,68 +278,30 @@ jobs:
           echo 'A publish rerun is not safe. Inspect fetchStatus and the Developer Dashboard; resolve manually.' >&2
           exit 1
 
-      - name: Restore exact pre-mutation attempt marker
+      - name: Create and verify public pre-mutation attempt ledger
         if: steps.plan.outputs.action == 'upload'
-        id: attempt-marker
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ runner.temp }}/cws-publish-attempt/marker
-          key: cws-publish-attempt-${{ needs.validate.outputs.sha256 }}
-
-      - name: Refuse a repeated mutation attempt
-        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit == 'true'
-        run: |
-          echo 'An attempt marker already exists for this exact release SHA-256.' >&2
-          echo 'Do not retry automatically; inspect fetchStatus and the Developer Dashboard, then resolve manually.' >&2
-          exit 1
-
-      - name: Create exact pre-mutation attempt marker
-        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
+        id: attempt-ledger
         shell: bash
         env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_ID: ${{ needs.validate.outputs.release_id }}
+          ASSET_ID: ${{ needs.validate.outputs.asset_id }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
           SHA256: ${{ needs.validate.outputs.sha256 }}
-          MARKER: ${{ runner.temp }}/cws-publish-attempt/marker
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          mkdir -p "$(dirname "${MARKER}")"
-          printf '%s\n' "${SHA256}" > "${MARKER}"
-
-      - name: Save exact pre-mutation attempt marker
-        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ runner.temp }}/cws-publish-attempt/marker
-          key: cws-publish-attempt-${{ needs.validate.outputs.sha256 }}
-
-      - name: Remove local marker before durability proof
-        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
-        env:
-          MARKER: ${{ runner.temp }}/cws-publish-attempt/marker
-        run: rm -f -- "${MARKER}"
-
-      - name: Restore saved marker to prove durability
-        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
-        id: durable-marker
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ runner.temp }}/cws-publish-attempt/marker
-          key: cws-publish-attempt-${{ needs.validate.outputs.sha256 }}
-
-      - name: Verify durable marker before mutation
-        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
-        shell: bash
-        env:
-          CACHE_HIT: ${{ steps.durable-marker.outputs.cache-hit }}
-          SHA256: ${{ needs.validate.outputs.sha256 }}
-          MARKER: ${{ runner.temp }}/cws-publish-attempt/marker
-        run: |
-          set -euo pipefail
-          [[ "${CACHE_HIT}" == 'true' ]] || {
-            echo 'Attempt marker was not durably restored; refusing to mutate.' >&2; exit 1;
-          }
-          [[ "$(<"${MARKER}")" == "${SHA256}" ]] || {
-            echo 'Attempt marker content does not match the validated SHA-256; refusing to mutate.' >&2; exit 1;
-          }
+          node scripts/chrome-web-store.mjs claim-attempt \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${RELEASE_TAG}" \
+            --version "${RELEASE_VERSION}" \
+            --release-id "${RELEASE_ID}" \
+            --asset-id "${ASSET_ID}" \
+            --commit "${RELEASE_COMMIT}" \
+            --sha256 "${SHA256}" \
+            --run-url "${RUN_URL}"
 
       - name: Upload and submit for automatic publication after review
         if: steps.plan.outputs.action == 'upload'

@@ -33,7 +33,9 @@ publishing the release. Create a draft, attach the one correctly named ZIP, then
 publish it. Future releases must use an annotated strict `vMAJOR.MINOR.PATCH` tag,
 have GitHub's `immutable` flag set, and expose GitHub's asset SHA-256 digest. A
 `release.published` event validates the release and then waits at the protected
-environment; it never skips approval.
+environment; it never skips approval. The legacy `v0.3.0` release event is
+explicitly rejected so unpublishing and republishing it cannot bypass its manual
+typed confirmation.
 
 ## 1. Create the dedicated Google Cloud identity
 
@@ -180,11 +182,15 @@ All four **environment variables** are configured; they are not secrets:
 
 There are no GitHub secrets. The workflow requests a short-lived access token only
 after the environment gate. Read-only status uses the
-`chromewebstore.readonly` scope; publishing uses `chromewebstore`.
+`chromewebstore.readonly` scope; publishing uses `chromewebstore`. The publish job
+alone also receives `issues: write` for its durable public attempt ledger. The
+status job has only `contents: read` and `id-token: write`.
 
 ## 3. Preflight and release `v0.3.0`
 
-From **Actions → Chrome Web Store → Run workflow**, use the `main` branch.
+From **Actions → Chrome Web Store → Run workflow**, use the `main` branch. Manual
+`status` and `publish` jobs enforce `refs/heads/main`; manual `validate` may run from
+another ref because it receives no Google credentials and cannot mutate Chrome.
 
 1. GitHub Actions WIF read-only preflight (not yet run; wait until the workflow is
    merged): set tag `v0.3.0`, operation `status`, and leave confirmation empty.
@@ -206,10 +212,14 @@ From **Actions → Chrome Web Store → Run workflow**, use the `main` branch.
 Approval performs the single public-release gate. After approval, the job downloads
 the validated asset again by asset ID, rechecks all identities and SHA-256, checks
 store state, and records a read-only upload/no-op plan. For an upload plan it must
-restore no existing exact-SHA-256 attempt marker, durably save and restore that
-marker through the pinned GitHub cache action, and verify its content before the
-helper checks store status again immediately before uploading once and submitting
-once with:
+list every repository issue in both open and closed states and find no canonical
+ledger for the exact SHA-256. It then creates one public audit issue containing the
+release tag and version, release and asset IDs, commit, SHA-256, and GitHub run URL,
+verifies the successful creation response, and fetches that exact issue again.
+Every attempted release that reaches this pre-mutation point therefore has one
+public audit issue. Any list, create, or verification failure stops before Chrome
+mutation. Only then does the helper check store status again immediately before
+uploading once and submitting once with:
 
 ```json
 {"publishType":"DEFAULT_PUBLISH","skipReview":false,"blockOnWarnings":true}
@@ -221,9 +231,11 @@ submission and never blindly retries an uncertain upload or publish POST. If the
 exact version is already pending or published, it records a no-op instead.
 
 Manual `publish` dispatch is restricted to the pinned legacy release `v0.3.0`, with
-confirmation exactly `publish v0.3.0`. Later releases publish only from their
-`release.published` event, which keeps each marker in one tag-ref cache scope.
-Manual `validate` and `status` continue to support later release tags.
+confirmation exactly `publish v0.3.0`, and runs only from `main`. A
+`release.published` event for `v0.3.0` is excluded from the publish job and rejected
+during validation. Later releases publish only from their `release.published`
+event. Manual `validate` and main-only `status` continue to support later release
+tags.
 
 For later versions, publishing a non-draft, non-prerelease GitHub release triggers
 the same validation and queues the protected publish job automatically. Keep
@@ -237,11 +249,13 @@ release immutability enabled; prepare all assets before publishing the draft.
   `publish`. Run read-only `status` and inspect the Developer Dashboard. An exact
   pending or published version is an audited no-op; any other state requires manual
   resolution.
-- An attempt-marker hit always blocks automatic retry. GitHub cache storage is a
-  practical durable guard, not a permanent ledger: entries are subject to GitHub's
-  retention and repository cache limits. A known or possible cache loss makes a
-  cache miss ambiguous. If an earlier run might have reached mutation, resolve in
-  the Dashboard instead of dispatching again.
+- A matching attempt-ledger issue always blocks automatic retry whether the issue
+  is open or closed. The issue is repository-wide, does not expire, and is not
+  split by workflow ref. The workflow never edits, closes, or deletes it. An
+  explicit repository administrator edit or deletion is the only bypass; before
+  taking that action, verify the exact item state in the Developer Dashboard and
+  treat any uncertain outcome as requiring manual resolution. Closing an unchanged
+  issue is not a bypass.
 - A successful prior upload without a corresponding pending/published submission
   also requires Dashboard resolution. The helper treats that store status as
   ambiguous and will not upload again automatically.
