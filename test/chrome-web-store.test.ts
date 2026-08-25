@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -22,7 +22,9 @@ const {
   parseChromeVersion,
   parseReleaseTag,
   parseZipFiles,
+  planStorePublish,
   publishToStore,
+  requireManualPublishTag,
   requirePublishConfirmation,
   validateManifest,
   validatePublisherId,
@@ -118,6 +120,8 @@ describe('release and Chrome version validation', () => {
   it('accepts strict release tags and exact manual confirmation', () => {
     expect(parseReleaseTag('v0.3.0')).toBe('0.3.0');
     expect(() => requirePublishConfirmation('v0.3.0', 'publish v0.3.0')).not.toThrow();
+    expect(() => requireManualPublishTag('v0.3.0')).not.toThrow();
+    expect(() => requireManualPublishTag('v0.4.0')).toThrow(/restricted to legacy/);
     expect(() => requirePublishConfirmation('v0.3.0', 'publish 0.3.0')).toThrow(/exactly/);
     expect(() => parseReleaseTag('v01.3.0')).toThrow(/strict/);
     expect(() => parseReleaseTag('v0.3.0/asset')).toThrow(/strict/);
@@ -131,6 +135,28 @@ describe('release and Chrome version validation', () => {
     expect(() => parseChromeVersion('1.2.3.65536')).toThrow(/65535/);
     expect(() => parseChromeVersion('1.02.3')).toThrow(/Invalid/);
     expect(() => parseChromeVersion('1.2.3.4.5')).toThrow(/Invalid/);
+  });
+});
+
+describe('publishing workflow guards', () => {
+  it('puts an exact-SHA durable attempt marker between read-only planning and mutation', async () => {
+    const workflow = await readFile(new URL('../.github/workflows/chrome-web-store.yml', import.meta.url), 'utf8');
+    const plan = workflow.indexOf('- name: Plan from current store status without mutation');
+    const restore = workflow.indexOf('- name: Restore exact pre-mutation attempt marker');
+    const save = workflow.indexOf('- name: Save exact pre-mutation attempt marker');
+    const prove = workflow.indexOf('- name: Verify durable marker before mutation');
+    const mutate = workflow.indexOf('- name: Upload and submit for automatic publication after review');
+    expect([plan, restore, save, prove, mutate]).toEqual([...new Set([plan, restore, save, prove, mutate])]);
+    expect(plan).toBeGreaterThan(0);
+    expect(plan).toBeLessThan(restore);
+    expect(restore).toBeLessThan(save);
+    expect(save).toBeLessThan(prove);
+    expect(prove).toBeLessThan(mutate);
+    expect(workflow.match(/actions\/cache\/(?:restore|save)@0057852bfaa89a56745cba8c7296529d2fc39830/g))
+      .toHaveLength(3);
+    expect(workflow).toContain('key: cws-publish-attempt-${{ needs.validate.outputs.sha256 }}');
+    expect(workflow).toContain("inputs.operation == 'publish' && inputs.release_tag == 'v0.3.0'");
+    expect(workflow.slice(mutate, mutate + 150)).toContain("if: steps.plan.outputs.action == 'upload'");
   });
 });
 
@@ -351,6 +377,20 @@ describe('direct API operations', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('creates a read-only publish plan before marker or mutation handling', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(status()));
+    await expect(planStorePublish({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      version: '0.3.0',
+      fetchImpl: fetchMock,
+      deriveId: deriveExpectedId,
+    })).resolves.toMatchObject({ decision: { action: 'upload', version: '0.3.0' } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({ method: 'GET' });
+  });
+
   it('uploads once and publishes once with the required safe body', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(status()))
@@ -419,8 +459,86 @@ describe('direct API operations', () => {
       version: '0.3.0',
       fetchImpl: fetchMock,
       deriveId: deriveExpectedId,
-    })).rejects.toThrow(/item ID/);
+    })).rejects.toThrow(/outcome is unknown.*item ID/i);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires crxVersion on a synchronous successful upload', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(status()))
+      .mockResolvedValueOnce(jsonResponse({
+        name, itemId: EXPECTED_EXTENSION_ID, uploadState: 'SUCCEEDED',
+      }));
+    await expect(publishToStore({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      zipBytes: Buffer.from('zip'),
+      version: '0.3.0',
+      fetchImpl: fetchMock,
+      deriveId: deriveExpectedId,
+    })).rejects.toThrow(/outcome is unknown.*version/i);
+  });
+
+  it.each([
+    ['HTTP 5xx', () => jsonResponse({ error: { message: 'temporary' } }, 503)],
+    ['malformed success', () => new Response('not-json', { status: 200 })],
+    ['schema mismatch', () => jsonResponse({ name, itemId: EXPECTED_EXTENSION_ID, uploadState: 'UNKNOWN' })],
+  ])('treats upload %s as an unknown mutation outcome', async (_label, uploadResponse) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(status()))
+      .mockResolvedValueOnce(uploadResponse());
+    await expect(publishToStore({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      zipBytes: Buffer.from('zip'),
+      version: '0.3.0',
+      fetchImpl: fetchMock,
+      deriveId: deriveExpectedId,
+    })).rejects.toThrow(/outcome is unknown; do not retry or rerun publish blindly/i);
+  });
+
+  it('treats upload aborts and bounded timeouts as unknown mutation outcomes', async () => {
+    const abortedFetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(status()))
+      .mockRejectedValueOnce(new DOMException('request aborted', 'AbortError'));
+    await expect(publishToStore({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      zipBytes: Buffer.from('zip'),
+      version: '0.3.0',
+      fetchImpl: abortedFetch,
+      deriveId: deriveExpectedId,
+    })).rejects.toThrow(/outcome is unknown.*aborted/i);
+
+    const timedOutFetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(status()))
+      .mockImplementationOnce(() => new Promise(() => {}));
+    await expect(publishToStore({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      zipBytes: Buffer.from('zip'),
+      version: '0.3.0',
+      fetchImpl: timedOutFetch,
+      deriveId: deriveExpectedId,
+      requestTimeoutMs: 5,
+    })).rejects.toThrow(/outcome is unknown.*timed out/i);
+  });
+
+  it('keeps pre-mutation status failures explicitly read-only', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ error: 'unavailable' }, 503));
+    await expect(publishToStore({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      zipBytes: Buffer.from('zip'),
+      version: '0.3.0',
+      fetchImpl: fetchMock,
+      deriveId: deriveExpectedId,
+    })).rejects.toThrow(/failed during a read-only request/);
   });
 
   it('fails loudly if publish returns a warning despite blockOnWarnings', async () => {
@@ -443,7 +561,7 @@ describe('direct API operations', () => {
       version: '0.3.0',
       fetchImpl: fetchMock,
       deriveId: deriveExpectedId,
-    })).rejects.toThrow(/warnings/);
+    })).rejects.toThrow(/outcome is unknown.*warnings/i);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

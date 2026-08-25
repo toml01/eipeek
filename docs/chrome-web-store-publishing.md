@@ -22,6 +22,11 @@ predates the workflow, so it can run only through a deliberate manual dispatch.
 Do not select `publish` until the upload and automatic-after-review release have
 been explicitly approved.
 
+Chrome Dashboard service-account association is complete. A direct read-only
+service-account `fetchStatus` check is also complete: it reported published version
+`0.2.1`, no pending submission, no warning or takedown, and no recent upload. The
+GitHub Actions WIF status preflight remains unrun until this workflow is merged.
+
 The workflow pins all facts above because this legacy release is mutable. For
 future versions, enable [GitHub immutable releases][github-immutable] before
 publishing the release. Create a draft, attach the one correctly named ZIP, then
@@ -141,10 +146,11 @@ gcloud projects get-iam-policy "${PROJECT_ID}" \
   --format='table(bindings.role)'
 ```
 
-**Pending manual step:** In **Chrome Web Store Developer Dashboard → Account**, add
-`SA_EMAIL` as the publisher's allowed service account. Chrome currently allows one
+The service account has been added in **Chrome Web Store Developer Dashboard →
+Account** as the publisher's allowed service account. Chrome currently allows one
 service account per publisher. This association—not a Cloud project role—authorizes
-access to the publisher's items.
+access to the publisher's items. The publisher identifier is a non-secret resource
+identifier; access tokens and credentials remain secret and must never be logged.
 
 ## 2. Protect the GitHub environment
 
@@ -180,11 +186,12 @@ after the environment gate. Read-only status uses the
 
 From **Actions → Chrome Web Store → Run workflow**, use the `main` branch.
 
-1. Read-only preflight (not yet run): set tag `v0.3.0`, operation `status`, and leave
-   confirmation empty. Approve the environment wait. This calls only API v2
-   `fetchStatus`; it cannot upload or publish. Confirm that the report says public
-   version `0.2.1`, with no warning, takedown, active submission, or ambiguous
-   recent upload.
+1. GitHub Actions WIF read-only preflight (not yet run; wait until the workflow is
+   merged): set tag `v0.3.0`, operation `status`, and leave confirmation empty.
+   Approve the environment wait. This calls only API v2 `fetchStatus`; it cannot
+   upload or publish. Confirm that the report agrees with the completed direct
+   service-account check: public version `0.2.1`, with no warning, takedown, active
+   submission, or recent upload.
 2. Artifact preflight: set tag `v0.3.0`, operation `validate`, and leave
    confirmation empty. This needs neither Google authentication nor environment
    approval. It verifies GitHub IDs and pins, ZIP digest, root manifest, package
@@ -198,7 +205,11 @@ From **Actions → Chrome Web Store → Run workflow**, use the `main` branch.
 
 Approval performs the single public-release gate. After approval, the job downloads
 the validated asset again by asset ID, rechecks all identities and SHA-256, checks
-store state, uploads once, and submits once with:
+store state, and records a read-only upload/no-op plan. For an upload plan it must
+restore no existing exact-SHA-256 attempt marker, durably save and restore that
+marker through the pinned GitHub cache action, and verify its content before the
+helper checks store status again immediately before uploading once and submitting
+once with:
 
 ```json
 {"publishType":"DEFAULT_PUBLISH","skipReview":false,"blockOnWarnings":true}
@@ -209,16 +220,31 @@ Chrome approves it**. There is no second manual gate. The workflow never cancels
 submission and never blindly retries an uncertain upload or publish POST. If the
 exact version is already pending or published, it records a no-op instead.
 
+Manual `publish` dispatch is restricted to the pinned legacy release `v0.3.0`, with
+confirmation exactly `publish v0.3.0`. Later releases publish only from their
+`release.published` event, which keeps each marker in one tag-ref cache scope.
+Manual `validate` and `status` continue to support later release tags.
+
 For later versions, publishing a non-draft, non-prerelease GitHub release triggers
 the same validation and queues the protected publish job automatically. Keep
 release immutability enabled; prepare all assets before publishing the draft.
 
 ## Recovery and revocation
 
-- If a mutating request reports a network failure, do not rerun `publish`
-  immediately. Run the read-only `status` operation and inspect the Developer
-  Dashboard. An exact pending or published version is a safe no-op; any conflicting
-  or ambiguous state requires manual investigation.
+- Every error after an upload or publish request may have been sent is an unknown
+  outcome. This includes a timeout or abort, network exception, non-2xx response,
+  non-JSON success, or response identity/schema/version mismatch. Do not rerun
+  `publish`. Run read-only `status` and inspect the Developer Dashboard. An exact
+  pending or published version is an audited no-op; any other state requires manual
+  resolution.
+- An attempt-marker hit always blocks automatic retry. GitHub cache storage is a
+  practical durable guard, not a permanent ledger: entries are subject to GitHub's
+  retention and repository cache limits. A known or possible cache loss makes a
+  cache miss ambiguous. If an earlier run might have reached mutation, resolve in
+  the Dashboard instead of dispatching again.
+- A successful prior upload without a corresponding pending/published submission
+  also requires Dashboard resolution. The helper treats that store status as
+  ambiguous and will not upload again automatically.
 - Resolve policy warnings, takedowns, rejected submissions, staged releases, or
   conflicting active submissions in the Dashboard. The automation fails closed
   and does not cancel anything.

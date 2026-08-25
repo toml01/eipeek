@@ -124,6 +124,11 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
       - name: Check environment configuration before authentication
         shell: bash
         env:
@@ -169,7 +174,9 @@ jobs:
 
   publish:
     name: Protected upload and publish
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'publish')
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && inputs.operation == 'publish' && inputs.release_tag == 'v0.3.0')
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -183,6 +190,11 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
 
       - name: Re-download and revalidate approved release asset
         shell: bash
@@ -243,7 +255,90 @@ jobs:
           access_token_lifetime: 1200s
           access_token_scopes: https://www.googleapis.com/auth/chromewebstore
 
+      - name: Plan from current store status without mutation
+        id: plan
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: >-
+          node scripts/chrome-web-store.mjs plan
+          --publisher-id "${CWS_PUBLISHER_ID}"
+          --extension-id "${CWS_EXTENSION_ID}"
+          --version "${RELEASE_VERSION}"
+
+      - name: Refuse an in-place rerun before mutation
+        if: steps.plan.outputs.action == 'upload' && github.run_attempt != 1
+        run: |
+          echo 'A publish rerun is not safe. Inspect fetchStatus and the Developer Dashboard; resolve manually.' >&2
+          exit 1
+
+      - name: Restore exact pre-mutation attempt marker
+        if: steps.plan.outputs.action == 'upload'
+        id: attempt-marker
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/cws-publish-attempt/marker
+          key: cws-publish-attempt-${{ needs.validate.outputs.sha256 }}
+
+      - name: Refuse a repeated mutation attempt
+        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit == 'true'
+        run: |
+          echo 'An attempt marker already exists for this exact release SHA-256.' >&2
+          echo 'Do not retry automatically; inspect fetchStatus and the Developer Dashboard, then resolve manually.' >&2
+          exit 1
+
+      - name: Create exact pre-mutation attempt marker
+        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          SHA256: ${{ needs.validate.outputs.sha256 }}
+          MARKER: ${{ runner.temp }}/cws-publish-attempt/marker
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${MARKER}")"
+          printf '%s\n' "${SHA256}" > "${MARKER}"
+
+      - name: Save exact pre-mutation attempt marker
+        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/cws-publish-attempt/marker
+          key: cws-publish-attempt-${{ needs.validate.outputs.sha256 }}
+
+      - name: Remove local marker before durability proof
+        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
+        env:
+          MARKER: ${{ runner.temp }}/cws-publish-attempt/marker
+        run: rm -f -- "${MARKER}"
+
+      - name: Restore saved marker to prove durability
+        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
+        id: durable-marker
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/cws-publish-attempt/marker
+          key: cws-publish-attempt-${{ needs.validate.outputs.sha256 }}
+
+      - name: Verify durable marker before mutation
+        if: steps.plan.outputs.action == 'upload' && steps.attempt-marker.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.durable-marker.outputs.cache-hit }}
+          SHA256: ${{ needs.validate.outputs.sha256 }}
+          MARKER: ${{ runner.temp }}/cws-publish-attempt/marker
+        run: |
+          set -euo pipefail
+          [[ "${CACHE_HIT}" == 'true' ]] || {
+            echo 'Attempt marker was not durably restored; refusing to mutate.' >&2; exit 1;
+          }
+          [[ "$(<"${MARKER}")" == "${SHA256}" ]] || {
+            echo 'Attempt marker content does not match the validated SHA-256; refusing to mutate.' >&2; exit 1;
+          }
+
       - name: Upload and submit for automatic publication after review
+        if: steps.plan.outputs.action == 'upload'
         env:
           CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
           CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}

@@ -41,6 +41,7 @@ const API_BASE = 'https://chromewebstore.googleapis.com';
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_ZIP_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_ZIP_TOTAL_BYTES = 256 * 1024 * 1024;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
@@ -85,6 +86,10 @@ export function compareChromeVersions(left, right) {
 export function requirePublishConfirmation(tag, confirmation) {
   parseReleaseTag(tag);
   invariant(confirmation === `publish ${tag}`, `Publish confirmation must be exactly "publish ${tag}"`);
+}
+
+export function requireManualPublishTag(tag) {
+  invariant(tag === 'v0.3.0', 'Manual publish dispatch is restricted to legacy release v0.3.0');
 }
 
 function validateRepositoryName(repository) {
@@ -207,10 +212,31 @@ async function responseError(response, label) {
   return new Error(`${label} failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
 }
 
+async function boundedRequest(fetchImpl, url, options, label, consume, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+  invariant(Number.isFinite(timeoutMs) && timeoutMs > 0, 'Request timeout must be positive');
+  const controller = new AbortController();
+  let timeout;
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      (async () => consume(await fetchImpl(url, { ...options, signal: controller.signal })))(),
+      deadline,
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function githubJson(fetchImpl, url, token, label) {
-  const response = await fetchImpl(url, { headers: githubHeaders(token) });
-  if (!response.ok) throw await responseError(response, label);
-  return response.json();
+  return boundedRequest(fetchImpl, url, { headers: githubHeaders(token) }, label, async (response) => {
+    if (!response.ok) throw await responseError(response, label);
+    return response.json();
+  });
 }
 
 async function resolveAnnotatedTag(fetchImpl, repository, token, tag) {
@@ -286,12 +312,13 @@ export async function resolveGitHubRelease({
   invariant(isRecord(packageDocument) && packageDocument.name === 'eipeek', 'Release package name must be eipeek');
   invariant(packageDocument.version === metadata.version, 'Release package version does not match its tag');
 
-  const assetResponse = await fetchImpl(`${apiRoot}/releases/assets/${metadata.assetId}`, {
+  const bytes = await boundedRequest(fetchImpl, `${apiRoot}/releases/assets/${metadata.assetId}`, {
     headers: githubHeaders(token, 'application/octet-stream'),
     redirect: 'follow',
+  }, 'Release asset download', async (assetResponse) => {
+    if (!assetResponse.ok) throw await responseError(assetResponse, 'Release asset download');
+    return Buffer.from(await assetResponse.arrayBuffer());
   });
-  if (!assetResponse.ok) throw await responseError(assetResponse, 'Release asset download');
-  const bytes = Buffer.from(await assetResponse.arrayBuffer());
   invariant(bytes.length === metadata.assetSize, 'Downloaded release asset size does not match GitHub metadata');
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   if (metadata.apiSha256 !== undefined) invariant(sha256 === metadata.apiSha256, 'Downloaded asset does not match GitHub digest');
@@ -607,7 +634,8 @@ export function decidePublishAction(status, requestedVersion) {
       `Refusing version ${requestedVersion} after ${submittedState} submission ${submittedVersion}; create a newer release`);
   }
   if (status.lastAsyncUploadState === 'SUCCEEDED') {
-    throw new Error('A recent successful upload has ambiguous submission state; inspect the dashboard before retrying');
+    throw new Error('A recent successful upload has ambiguous submission state; do not retry automatically; '
+      + 'resolve it manually in the Developer Dashboard');
   }
   return { action: 'upload', reason: 'new-version', version: requestedVersion };
 }
@@ -617,24 +645,25 @@ function cwsHeaders(accessToken, extra = {}) {
   return { Authorization: `Bearer ${accessToken}`, ...extra };
 }
 
-async function cwsJson(fetchImpl, url, options, label, mutation = false) {
-  let response;
+async function cwsJson(fetchImpl, url, options, label, requestTimeoutMs) {
   try {
-    response = await fetchImpl(url, options);
+    return await boundedRequest(fetchImpl, url, options, label, async (response) => {
+      if (!response.ok) throw await responseError(response, label);
+      try {
+        return await response.json();
+      } catch {
+        throw new Error(`${label} returned a non-JSON success response`);
+      }
+    }, requestTimeoutMs);
   } catch (error) {
-    const guidance = mutation
-      ? ' outcome is unknown after a network failure; do not retry this mutating request blindly'
-      : ' failed before a response was received';
-    throw new Error(`${label}${guidance}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`${label} failed during a read-only request: ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (!response.ok) throw await responseError(response, label);
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error(`${label} returned a non-JSON success response`);
-  }
-  return body;
+}
+
+function mutationOutcomeUnknown(error) {
+  return new Error('Chrome Web Store mutation outcome is unknown; do not retry or rerun publish blindly. '
+    + `Inspect fetchStatus and the Developer Dashboard, then resolve manually: ${error instanceof Error ? error.message : String(error)}`,
+  { cause: error });
 }
 
 export async function fetchStoreStatus({
@@ -643,6 +672,7 @@ export async function fetchStoreStatus({
   accessToken,
   fetchImpl = fetch,
   deriveId = deriveExtensionId,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 }) {
   validatePublisherId(publisherId);
   validateExtensionId(extensionId);
@@ -650,7 +680,7 @@ export async function fetchStoreStatus({
   const status = await cwsJson(fetchImpl, `${API_BASE}/v2/${name}:fetchStatus`, {
     method: 'GET',
     headers: cwsHeaders(accessToken),
-  }, 'Chrome Web Store fetchStatus');
+  }, 'Chrome Web Store fetchStatus', requestTimeoutMs);
   verifyItemIdentity(status, publisherId, extensionId, 'fetchStatus');
   invariant(status.takenDown === undefined || typeof status.takenDown === 'boolean',
     'Chrome Web Store status has an invalid takenDown flag');
@@ -659,6 +689,11 @@ export async function fetchStoreStatus({
   invariant(deriveId(status.publicKey) === extensionId,
     'Chrome Web Store public key derives a different extension ID');
   return status;
+}
+
+export async function planStorePublish(options) {
+  const status = await fetchStoreStatus(options);
+  return { decision: decidePublishAction(status, options.version), status };
 }
 
 export function summarizeStatus(status) {
@@ -689,62 +724,89 @@ export async function publishToStore({
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   pollIntervalMs = 10_000,
   pollTimeoutMs = 10 * 60_000,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 }) {
   parseChromeVersion(version, 3);
   invariant(Buffer.isBuffer(zipBytes) && zipBytes.length > 0, 'Release ZIP bytes are required');
-  const initialStatus = await fetchStoreStatus({ publisherId, extensionId, accessToken, fetchImpl, deriveId });
+  const initialStatus = await fetchStoreStatus({
+    publisherId, extensionId, accessToken, fetchImpl, deriveId, requestTimeoutMs,
+  });
   const decision = decidePublishAction(initialStatus, version);
   if (decision.action === 'noop') return { decision, status: initialStatus, mutated: false };
 
   const name = `publishers/${publisherId}/items/${extensionId}`;
-  const upload = await cwsJson(fetchImpl, `${API_BASE}/upload/v2/${name}:upload`, {
-    method: 'POST',
-    headers: cwsHeaders(accessToken, {
-      'Content-Type': 'application/zip',
-      'X-Goog-Upload-Protocol': 'raw',
-      'X-Goog-Upload-File-Name': `eipeek-${version}-chrome.zip`,
-    }),
-    body: zipBytes,
-  }, 'Chrome Web Store upload', true);
-  verifyItemIdentity(upload, publisherId, extensionId, 'upload');
-  invariant(upload.uploadState === 'SUCCEEDED' || upload.uploadState === 'IN_PROGRESS',
-    `Upload did not succeed: ${String(upload.uploadState)}`);
-  if (upload.crxVersion !== undefined) invariant(upload.crxVersion === version, 'Uploaded package version does not match request');
-
-  if (upload.uploadState === 'IN_PROGRESS') {
-    const deadline = Date.now() + pollTimeoutMs;
-    let uploadState = 'IN_PROGRESS';
-    while (uploadState === 'IN_PROGRESS') {
-      invariant(Date.now() < deadline, 'Timed out waiting for Chrome Web Store upload processing');
-      await sleep(pollIntervalMs);
-      const polled = await fetchStoreStatus({ publisherId, extensionId, accessToken, fetchImpl, deriveId });
-      uploadState = polled.lastAsyncUploadState;
-      invariant(UPLOAD_STATES.has(uploadState), `Upload polling returned unexpected state ${String(uploadState)}`);
+  try {
+    const upload = await boundedRequest(fetchImpl, `${API_BASE}/upload/v2/${name}:upload`, {
+      method: 'POST',
+      headers: cwsHeaders(accessToken, {
+        'Content-Type': 'application/zip',
+        'X-Goog-Upload-Protocol': 'raw',
+        'X-Goog-Upload-File-Name': `eipeek-${version}-chrome.zip`,
+      }),
+      body: zipBytes,
+    }, 'Chrome Web Store upload', async (response) => {
+      if (!response.ok) throw await responseError(response, 'Chrome Web Store upload');
+      try {
+        return await response.json();
+      } catch {
+        throw new Error('Chrome Web Store upload returned a non-JSON success response');
+      }
+    }, requestTimeoutMs);
+    verifyItemIdentity(upload, publisherId, extensionId, 'upload');
+    invariant(upload.uploadState === 'SUCCEEDED' || upload.uploadState === 'IN_PROGRESS',
+      `Upload did not succeed: ${String(upload.uploadState)}`);
+    if (upload.uploadState === 'SUCCEEDED') {
+      invariant(upload.crxVersion === version, 'Successful upload package version does not match request');
+    } else if (upload.crxVersion !== undefined) {
+      invariant(upload.crxVersion === version, 'Uploaded package version does not match request');
     }
-    invariant(uploadState === 'SUCCEEDED', `Asynchronous upload ended in ${uploadState}`);
-  }
 
-  const publish = await cwsJson(fetchImpl, `${API_BASE}/v2/${name}:publish`, {
-    method: 'POST',
-    headers: cwsHeaders(accessToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(PUBLISH_REQUEST),
-  }, 'Chrome Web Store publish', true);
-  verifyItemIdentity(publish, publisherId, extensionId, 'publish');
-  invariant(['PENDING_REVIEW', 'PUBLISHED', 'PUBLISHED_TO_TESTERS'].includes(publish.state),
-    `Publish returned unexpected state ${String(publish.state)}`);
-  if (publish.warningInfo !== undefined) {
-    invariant(isRecord(publish.warningInfo) && Array.isArray(publish.warningInfo.warnings),
-      'Publish returned malformed warning information');
-    invariant(publish.warningInfo.warnings.length === 0,
-      'Publish unexpectedly returned warnings despite blockOnWarnings');
+    if (upload.uploadState === 'IN_PROGRESS') {
+      const deadline = Date.now() + pollTimeoutMs;
+      let uploadState = 'IN_PROGRESS';
+      while (uploadState === 'IN_PROGRESS') {
+        invariant(Date.now() < deadline, 'Timed out waiting for Chrome Web Store upload processing');
+        await sleep(pollIntervalMs);
+        const polled = await fetchStoreStatus({
+          publisherId, extensionId, accessToken, fetchImpl, deriveId, requestTimeoutMs,
+        });
+        uploadState = polled.lastAsyncUploadState;
+        invariant(UPLOAD_STATES.has(uploadState), `Upload polling returned unexpected state ${String(uploadState)}`);
+      }
+      invariant(uploadState === 'SUCCEEDED', `Asynchronous upload ended in ${uploadState}`);
+    }
+
+    const publish = await boundedRequest(fetchImpl, `${API_BASE}/v2/${name}:publish`, {
+      method: 'POST',
+      headers: cwsHeaders(accessToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(PUBLISH_REQUEST),
+    }, 'Chrome Web Store publish', async (response) => {
+      if (!response.ok) throw await responseError(response, 'Chrome Web Store publish');
+      try {
+        return await response.json();
+      } catch {
+        throw new Error('Chrome Web Store publish returned a non-JSON success response');
+      }
+    }, requestTimeoutMs);
+    verifyItemIdentity(publish, publisherId, extensionId, 'publish');
+    invariant(['PENDING_REVIEW', 'PUBLISHED', 'PUBLISHED_TO_TESTERS'].includes(publish.state),
+      `Publish returned unexpected state ${String(publish.state)}`);
+    if (publish.warningInfo !== undefined) {
+      invariant(isRecord(publish.warningInfo) && Array.isArray(publish.warningInfo.warnings),
+        'Publish returned malformed warning information');
+      invariant(publish.warningInfo.warnings.length === 0,
+        'Publish unexpectedly returned warnings despite blockOnWarnings');
+    }
+    return { decision: { action: 'published', reason: publish.state.toLowerCase(), version }, publish, mutated: true };
+  } catch (error) {
+    throw mutationOutcomeUnknown(error);
   }
-  return { decision: { action: 'published', reason: publish.state.toLowerCase(), version }, publish, mutated: true };
 }
 
 function parseArguments(argv) {
   const [operation, ...rest] = argv;
-  invariant(['validate-release', 'compare-release', 'status', 'publish'].includes(operation),
-    'Usage: chrome-web-store.mjs <validate-release|compare-release|status|publish> [--key value]');
+  invariant(['validate-release', 'compare-release', 'status', 'plan', 'publish'].includes(operation),
+    'Usage: chrome-web-store.mjs <validate-release|compare-release|status|plan|publish> [--key value]');
   invariant(rest.length % 2 === 0, 'Every CLI option requires a value');
   const options = {};
   for (let index = 0; index < rest.length; index += 2) {
@@ -789,6 +851,7 @@ async function main(argv) {
   if (operation === 'validate-release') {
     const tag = requireOption(options, 'tag');
     if (options.operation === 'publish' && options['event-release-id'] === undefined) {
+      requireManualPublishTag(tag);
       requirePublishConfirmation(tag, options.confirmation ?? '');
     }
     const expected = {
@@ -853,6 +916,16 @@ async function main(argv) {
   }
 
   const version = requireOption(options, 'version');
+  if (operation === 'plan') {
+    const result = await planStorePublish({ publisherId, extensionId, accessToken, version });
+    await appendOutput({ action: result.decision.action, reason: result.decision.reason });
+    await appendSummary('Chrome Web Store publish plan (read-only)', {
+      version,
+      decision: result.decision,
+      status: summarizeStatus(result.status),
+    });
+    return;
+  }
   const zipBytes = await readFile(requireOption(options, 'artifact'));
   const result = await publishToStore({ publisherId, extensionId, accessToken, zipBytes, version });
   await appendSummary('Chrome Web Store publish result', {
