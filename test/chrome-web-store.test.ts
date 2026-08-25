@@ -73,13 +73,19 @@ function storedZip(entries: Array<{
   contents?: string | Buffer;
   versionMadeBy?: number;
   externalAttributes?: number;
-}>) {
+  localExtra?: Buffer;
+  centralExtra?: Buffer;
+  comment?: string | Buffer;
+}>, archiveComment: string | Buffer = Buffer.alloc(0)) {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let localOffset = 0;
   for (const entry of entries) {
     const name = Buffer.from(entry.name);
     const contents = Buffer.from(entry.contents ?? entry.name);
+    const localExtra = entry.localExtra ?? Buffer.alloc(0);
+    const centralExtra = entry.centralExtra ?? Buffer.alloc(0);
+    const comment = Buffer.from(entry.comment ?? '');
     const flags = name.some((byte) => byte > 0x7f) ? 0x0800 : 0;
     const checksum = crc32(contents);
     const local = Buffer.alloc(30);
@@ -90,7 +96,8 @@ function storedZip(entries: Array<{
     local.writeUInt32LE(contents.length, 18);
     local.writeUInt32LE(contents.length, 22);
     local.writeUInt16LE(name.length, 26);
-    locals.push(local, name, contents);
+    local.writeUInt16LE(localExtra.length, 28);
+    locals.push(local, name, localExtra, contents);
 
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
@@ -101,19 +108,35 @@ function storedZip(entries: Array<{
     central.writeUInt32LE(contents.length, 20);
     central.writeUInt32LE(contents.length, 24);
     central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(centralExtra.length, 30);
+    central.writeUInt16LE(comment.length, 32);
     central.writeUInt32LE(entry.externalAttributes ?? 0, 38);
     central.writeUInt32LE(localOffset, 42);
-    centrals.push(central, name);
-    localOffset += local.length + name.length + contents.length;
+    centrals.push(central, name, centralExtra, comment);
+    localOffset += local.length + name.length + localExtra.length + contents.length;
   }
   const centralBytes = Buffer.concat(centrals);
+  const eocdComment = Buffer.from(archiveComment);
   const eocd = Buffer.alloc(22);
   eocd.writeUInt32LE(0x06054b50, 0);
   eocd.writeUInt16LE(entries.length, 8);
   eocd.writeUInt16LE(entries.length, 10);
   eocd.writeUInt32LE(centralBytes.length, 12);
   eocd.writeUInt32LE(localOffset, 16);
-  return Buffer.concat([...locals, centralBytes, eocd]);
+  eocd.writeUInt16LE(eocdComment.length, 20);
+  return Buffer.concat([...locals, centralBytes, eocd, eocdComment]);
+}
+
+function unicodePathExtra(originalName: string, alternateName: string) {
+  const original = Buffer.from(originalName);
+  const alternate = Buffer.from(alternateName);
+  const extra = Buffer.alloc(9 + alternate.length);
+  extra.writeUInt16LE(0x7075, 0);
+  extra.writeUInt16LE(5 + alternate.length, 2);
+  extra.writeUInt8(1, 4);
+  extra.writeUInt32LE(crc32(original), 5);
+  alternate.copy(extra, 9);
+  return extra;
 }
 
 describe('release and Chrome version validation', () => {
@@ -257,6 +280,25 @@ describe('release artifact invariants', () => {
       versionMadeBy: (3 << 8) | 20,
       externalAttributes: (0o120777 << 16) >>> 0,
     }]))).toThrow(/not a regular file/);
+  });
+
+  it('rejects Info-ZIP Unicode path extra fields that can supply alternate names', () => {
+    const alternate = unicodePathExtra('manifest.json', '../manifest.json');
+    expect(() => parseZipFiles(storedZip([{
+      name: 'manifest.json', contents: '{}', centralExtra: alternate,
+    }]))).toThrow(/central extra fields/);
+    expect(() => parseZipFiles(storedZip([{
+      name: 'manifest.json', contents: '{}', localExtra: alternate,
+    }]))).toThrow(/local extra fields/);
+  });
+
+  it('rejects entry and archive comments', () => {
+    expect(() => parseZipFiles(storedZip([{
+      name: 'manifest.json', contents: '{}', comment: 'alternate metadata',
+    }]))).toThrow(/entry comments/);
+    expect(() => parseZipFiles(storedZip([
+      { name: 'manifest.json', contents: '{}' },
+    ], 'archive metadata'))).toThrow(/archive comments/);
   });
 
   it('compares normalized ZIP paths and every file byte with a built directory', async () => {

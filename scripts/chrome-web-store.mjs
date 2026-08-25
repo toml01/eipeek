@@ -380,6 +380,7 @@ function entryIsDetectablyRegular(versionMadeBy, externalAttributes, name) {
 export function parseZipFiles(zipBytes) {
   invariant(Buffer.isBuffer(zipBytes) && zipBytes.length >= 22, 'Release ZIP bytes are invalid');
   const eocd = findEndOfCentralDirectory(zipBytes);
+  invariant(zipBytes.readUInt16LE(eocd + 20) === 0, 'Release ZIP archive comments are not supported');
   const disk = zipBytes.readUInt16LE(eocd + 4);
   const centralDisk = zipBytes.readUInt16LE(eocd + 6);
   const diskEntries = zipBytes.readUInt16LE(eocd + 8);
@@ -414,6 +415,8 @@ export function parseZipFiles(zipBytes) {
     const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
     invariant(nextOffset <= eocd, 'Release ZIP central directory entry exceeds its bounds');
     invariant(startingDisk === 0, 'Multi-disk ZIP entries are not supported');
+    invariant(extraLength === 0, 'Release ZIP central extra fields are not supported');
+    invariant(commentLength === 0, 'Release ZIP entry comments are not supported');
     invariant((flags & ~0x0800) === 0, 'Encrypted or specially encoded ZIP entries are not supported');
     invariant(method === 0 || method === 8, `Unsupported ZIP compression method ${method}`);
     invariant(compressedSize !== 0xffffffff && uncompressedSize !== 0xffffffff && localOffset !== 0xffffffff,
@@ -439,6 +442,7 @@ export function parseZipFiles(zipBytes) {
     const localNameStart = localOffset + 30;
     const dataStart = localNameStart + localNameLength + localExtraLength;
     const dataEnd = dataStart + compressedSize;
+    invariant(localExtraLength === 0, `ZIP local extra fields are not supported for ${name}`);
     invariant(localFlags === flags && localMethod === method && localCrc === expectedCrc
       && localCompressedSize === compressedSize && localUncompressedSize === uncompressedSize
       && dataEnd <= centralOffset,
