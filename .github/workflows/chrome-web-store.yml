@@ -105,8 +105,8 @@ jobs:
           GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
         run: |
           set -euo pipefail
-          [[ "${CWS_PUBLISHER_ID}" == "42f46ef0-44f9-444b-a0f7-7d5d80bd336b" ]] || {
-            echo 'CWS_PUBLISHER_ID is missing or does not match EIPeek' >&2; exit 1;
+          [[ "${CWS_PUBLISHER_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || {
+            echo 'CWS_PUBLISHER_ID must be copied from Developer Dashboard > Publisher > Settings' >&2; exit 1;
           }
           [[ "${CWS_EXTENSION_ID}" == "jeehadjadegokhcgmnnkdcenbpbolkll" ]] || {
             echo 'CWS_EXTENSION_ID is missing or does not match EIPeek' >&2; exit 1;
@@ -191,8 +191,8 @@ jobs:
           GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
         run: |
           set -euo pipefail
-          [[ "${CWS_PUBLISHER_ID}" == "42f46ef0-44f9-444b-a0f7-7d5d80bd336b" ]] || {
-            echo 'CWS_PUBLISHER_ID is missing or does not match EIPeek' >&2; exit 1;
+          [[ "${CWS_PUBLISHER_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || {
+            echo 'CWS_PUBLISHER_ID must be copied from Developer Dashboard > Publisher > Settings' >&2; exit 1;
           }
           [[ "${CWS_EXTENSION_ID}" == "jeehadjadegokhcgmnnkdcenbpbolkll" ]] || {
             echo 'CWS_EXTENSION_ID is missing or does not match EIPeek' >&2; exit 1;

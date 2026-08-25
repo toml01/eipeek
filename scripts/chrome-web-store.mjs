@@ -11,7 +11,6 @@ const execFileAsync = promisify(execFile);
 export const EXPECTED_REPOSITORY = 'toml01/eipeek';
 export const EXPECTED_REPOSITORY_ID = 1323913771;
 export const EXPECTED_OWNER_ID = 7473870;
-export const EXPECTED_PUBLISHER_ID = '42f46ef0-44f9-444b-a0f7-7d5d80bd336b';
 export const EXPECTED_EXTENSION_ID = 'jeehadjadegokhcgmnnkdcenbpbolkll';
 export const PUBLISH_REQUEST = Object.freeze({
   publishType: 'DEFAULT_PUBLISH',
@@ -352,8 +351,10 @@ export async function readAndValidateZipManifest(zipPath, expectedVersion) {
   return validateManifest(manifest, expectedVersion);
 }
 
-function validatePublisherId(publisherId) {
-  invariant(publisherId === EXPECTED_PUBLISHER_ID, 'Configured Chrome Web Store publisher ID does not match EIPeek');
+export function validatePublisherId(publisherId) {
+  invariant(typeof publisherId === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(publisherId),
+  'Chrome Web Store publisher ID must be a nonempty RFC 4122 version 4 UUID resource path component');
 }
 
 function validateExtensionId(extensionId) {

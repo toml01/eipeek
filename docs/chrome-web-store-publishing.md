@@ -7,7 +7,7 @@ service-account key, or generic publishing action.
 ## Current state
 
 - Store item: `jeehadjadegokhcgmnnkdcenbpbolkll`
-- Publisher: `42f46ef0-44f9-444b-a0f7-7d5d80bd336b`
+- Publisher: copy the ID from **Developer Dashboard → Publisher → Settings**
 - Public store version: `0.2.1`
 - Published GitHub release: `v0.3.0`
 - Release ID: `375937330`
@@ -139,7 +139,7 @@ Add these **environment variables**, not secrets:
 
 | Variable | Value |
 | --- | --- |
-| `CWS_PUBLISHER_ID` | `42f46ef0-44f9-444b-a0f7-7d5d80bd336b` |
+| `CWS_PUBLISHER_ID` | Copy the publisher ID from **Developer Dashboard → Publisher → Settings** into this variable |
 | `CWS_EXTENSION_ID` | `jeehadjadegokhcgmnnkdcenbpbolkll` |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/eipeek-github/providers/eipeek-cws` |
 | `GCP_SERVICE_ACCOUNT` | `eipeek-cws-publisher@PROJECT_ID.iam.gserviceaccount.com` |

@@ -8,7 +8,6 @@ const chromeWebStore =
 const {
   EXPECTED_EXTENSION_ID,
   EXPECTED_OWNER_ID,
-  EXPECTED_PUBLISHER_ID,
   EXPECTED_REPOSITORY,
   EXPECTED_REPOSITORY_ID,
   PUBLISH_REQUEST,
@@ -21,11 +20,13 @@ const {
   publishToStore,
   requirePublishConfirmation,
   validateManifest,
+  validatePublisherId,
   validateReleaseRecord,
   verifyItemIdentity,
 } = chromeWebStore;
 
-const name = `publishers/${EXPECTED_PUBLISHER_ID}/items/${EXPECTED_EXTENSION_ID}`;
+const PUBLISHER_ID = '00000000-0000-4000-8000-000000000000';
+const name = `publishers/${PUBLISHER_ID}/items/${EXPECTED_EXTENSION_ID}`;
 const deriveExpectedId = () => EXPECTED_EXTENSION_ID;
 
 function revision(state: string, version: string) {
@@ -133,6 +134,13 @@ describe('release artifact invariants', () => {
 });
 
 describe('Chrome Web Store identity', () => {
+  it('accepts only safe version 4 UUID publisher path components', () => {
+    expect(() => validatePublisherId(PUBLISHER_ID)).not.toThrow();
+    expect(() => validatePublisherId('')).toThrow(/publisher ID/);
+    expect(() => validatePublisherId('00000000-0000-5000-8000-000000000000')).toThrow(/publisher ID/);
+    expect(() => validatePublisherId('00000000-0000-4000-8000-000000000000/items')).toThrow(/publisher ID/);
+  });
+
   it('derives an extension ID from decoded public-key bytes', () => {
     const keyBytes = Buffer.from('deterministic public key fixture');
     const hex = createHash('sha256').update(keyBytes).digest('hex').slice(0, 32);
@@ -143,10 +151,10 @@ describe('Chrome Web Store identity', () => {
   });
 
   it('rejects item ID and resource-name mismatches in every response type', () => {
-    expect(() => verifyItemIdentity({ name, itemId: 'a'.repeat(32) }, EXPECTED_PUBLISHER_ID,
+    expect(() => verifyItemIdentity({ name, itemId: 'a'.repeat(32) }, PUBLISHER_ID,
       EXPECTED_EXTENSION_ID, 'upload')).toThrow(/item ID/);
     expect(() => verifyItemIdentity({ name: `${name}x`, itemId: EXPECTED_EXTENSION_ID },
-      EXPECTED_PUBLISHER_ID, EXPECTED_EXTENSION_ID, 'publish')).toThrow(/item name/);
+      PUBLISHER_ID, EXPECTED_EXTENSION_ID, 'publish')).toThrow(/item name/);
   });
 });
 
@@ -188,7 +196,7 @@ describe('direct API operations', () => {
   it('keeps status read-only and uses fetchStatus only', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(status()));
     await expect(fetchStoreStatus({
-      publisherId: EXPECTED_PUBLISHER_ID,
+      publisherId: PUBLISHER_ID,
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       fetchImpl: fetchMock,
@@ -204,7 +212,7 @@ describe('direct API operations', () => {
       submittedItemRevisionStatus: revision('PENDING_REVIEW', '0.3.0'),
     })));
     const result = await publishToStore({
-      publisherId: EXPECTED_PUBLISHER_ID,
+      publisherId: PUBLISHER_ID,
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       zipBytes: Buffer.from('zip'),
@@ -226,7 +234,7 @@ describe('direct API operations', () => {
         name, itemId: EXPECTED_EXTENSION_ID, state: 'PENDING_REVIEW',
       }));
     const result = await publishToStore({
-      publisherId: EXPECTED_PUBLISHER_ID,
+      publisherId: PUBLISHER_ID,
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       zipBytes: Buffer.from('zip'),
@@ -254,7 +262,7 @@ describe('direct API operations', () => {
       }));
     const sleep = vi.fn().mockResolvedValue(undefined);
     const result = await publishToStore({
-      publisherId: EXPECTED_PUBLISHER_ID,
+      publisherId: PUBLISHER_ID,
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       zipBytes: Buffer.from('zip'),
@@ -277,7 +285,7 @@ describe('direct API operations', () => {
         name, itemId: 'a'.repeat(32), crxVersion: '0.3.0', uploadState: 'SUCCEEDED',
       }));
     await expect(publishToStore({
-      publisherId: EXPECTED_PUBLISHER_ID,
+      publisherId: PUBLISHER_ID,
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       zipBytes: Buffer.from('zip'),
@@ -301,7 +309,7 @@ describe('direct API operations', () => {
         warningInfo: { warnings: [{ reason: 'TEST', description: 'fixture warning' }] },
       }));
     await expect(publishToStore({
-      publisherId: EXPECTED_PUBLISHER_ID,
+      publisherId: PUBLISHER_ID,
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       zipBytes: Buffer.from('zip'),
