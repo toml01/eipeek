@@ -100,9 +100,9 @@ const UPLOAD_PROOF = {
 };
 const ORIGINAL_ROLLOUT = {
   ...ROLLOUT,
-  runId: 246810,
-  runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/246810`,
-  workflowSha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+  runId: 32993251330,
+  runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/32993251330`,
+  workflowSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
 };
 const RECOVERY_ROLLOUT = {
   ...ROLLOUT,
@@ -110,7 +110,7 @@ const RECOVERY_ROLLOUT = {
   runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/135791`,
   workflowSha: '5'.repeat(40),
 };
-const PRIOR_JOB_ID = 97531;
+const PRIOR_JOB_ID = 98255955971;
 
 function revision(state: string, version: string) {
   return { state, distributionChannels: [{ deployPercentage: 100, crxVersion: version }] };
@@ -158,36 +158,36 @@ function rolloutIssue(number: number, marker: ReturnType<typeof formatRolloutLed
 
 function priorRun(overrides: Record<string, unknown> = {}) {
   return {
-    id: ORIGINAL_ROLLOUT.runId,
+    id: 32993251330,
     run_attempt: 1,
-    url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}`,
-    html_url: ORIGINAL_ROLLOUT.runUrl,
+    url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/32993251330`,
+    html_url: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/32993251330`,
     repository: { id: EXPECTED_REPOSITORY_ID, full_name: EXPECTED_REPOSITORY },
     path: '.github/workflows/chrome-web-store.yml',
     head_branch: 'main',
     event: 'workflow_dispatch',
     status: 'completed',
     conclusion: 'failure',
-    head_sha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
-    workflow_sha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+    head_sha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
+    workflow_sha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
     ...overrides,
   };
 }
 
 function priorJob(overrides: Record<string, unknown> = {}) {
-  const runApiUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}`;
+  const runApiUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/32993251330`;
   return {
-    id: PRIOR_JOB_ID,
-    name: SKIPPED_UPLOAD_RECOVERY_CONTRACT.jobName,
+    id: 98255955971,
+    name: 'Protected v0.3.0 draft upload',
     status: 'completed',
     conclusion: 'failure',
-    run_id: ORIGINAL_ROLLOUT.runId,
+    run_id: 32993251330,
     run_attempt: 1,
-    head_sha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+    head_sha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
     head_branch: 'main',
     run_url: runApiUrl,
-    url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/${PRIOR_JOB_ID}`,
-    html_url: `${ORIGINAL_ROLLOUT.runUrl}/job/${PRIOR_JOB_ID}`,
+    url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/98255955971`,
+    html_url: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/32993251330/job/98255955971`,
     steps: [
       { number: 1, name: 'Set up job', status: 'completed', conclusion: 'success' },
       { number: 2, name: 'Check out trusted workflow helper', status: 'completed', conclusion: 'success' },
@@ -197,15 +197,31 @@ function priorJob(overrides: Record<string, unknown> = {}) {
       { number: 6, name: 'Authenticate keylessly for draft upload', status: 'completed', conclusion: 'success' },
       { number: 7, name: 'Plan v0.3.0 upload from current store status without mutation', status: 'completed', conclusion: 'success' },
       { number: 8, name: 'Refuse an in-place upload rerun before mutation', status: 'completed', conclusion: 'skipped' },
-      { ...SKIPPED_UPLOAD_RECOVERY_CONTRACT.steps.ledger },
-      { ...SKIPPED_UPLOAD_RECOVERY_CONTRACT.steps.upload },
-      { ...SKIPPED_UPLOAD_RECOVERY_CONTRACT.steps.successLedger },
+      {
+        number: 9,
+        name: 'Create and verify canonical pre-upload attempt ledger',
+        status: 'completed',
+        conclusion: 'failure',
+      },
+      {
+        number: 10,
+        name: 'Upload v0.3.0 draft without publishing',
+        status: 'completed',
+        conclusion: 'skipped',
+      },
+      {
+        number: 11,
+        name: 'Create and verify canonical synchronous upload-success ledger',
+        status: 'completed',
+        conclusion: 'skipped',
+      },
     ],
     ...overrides,
   };
 }
 
-function otherPriorJob(id: number, name = `Unrelated completed job ${id}`) {
+function otherPriorJob(id: number, name = `Unrelated completed job ${id}`,
+  overrides: Record<string, unknown> = {}) {
   return priorJob({
     id,
     name,
@@ -213,25 +229,36 @@ function otherPriorJob(id: number, name = `Unrelated completed job ${id}`) {
     url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/${id}`,
     html_url: `${ORIGINAL_ROLLOUT.runUrl}/job/${id}`,
     steps: [],
+    ...overrides,
   });
 }
 
-function originalAttemptIssue(number = 9) {
-  return rolloutIssue(number, formatRolloutLedgerMarker('uploadAttempt', ORIGINAL_ROLLOUT));
+function historicalIncidentJobs() {
+  return [
+    otherPriorJob(98255955969, 'Validate immutable release inputs'),
+    otherPriorJob(98255955970, 'Read Chrome Web Store status', { conclusion: 'skipped' }),
+    priorJob(),
+    otherPriorJob(98255955972, 'Protected v0.3.0 review submission', { conclusion: 'skipped' }),
+    otherPriorJob(98255955973, 'Protected future release upload and publish', { conclusion: 'skipped' }),
+  ];
 }
 
-function expectedRecoveryEvidence(job = priorJob(), jobsTotalCount = 1) {
+function originalAttemptIssue(number = 9, state = 'open') {
+  return rolloutIssue(number, formatRolloutLedgerMarker('uploadAttempt', ORIGINAL_ROLLOUT), state);
+}
+
+function expectedRecoveryEvidence(job = priorJob(), jobsTotalCount = 5) {
   return {
     run: {
       repository: EXPECTED_REPOSITORY,
       repositoryId: EXPECTED_REPOSITORY_ID,
-      runId: ORIGINAL_ROLLOUT.runId,
+      runId: 32993251330,
       runAttempt: 1,
       runUrl: ORIGINAL_ROLLOUT.runUrl,
       apiUrl: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}`,
       workflowPath: '.github/workflows/chrome-web-store.yml',
-      workflowSha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
-      headSha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+      workflowSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
+      headSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
       headBranch: 'main',
       event: 'workflow_dispatch',
       status: 'completed',
@@ -245,10 +272,29 @@ function expectedRecoveryEvidence(job = priorJob(), jobsTotalCount = 1) {
       jobName: job.name,
       status: 'completed',
       conclusion: 'failure',
-      headSha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
-      runId: ORIGINAL_ROLLOUT.runId,
+      headSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
+      runId: 32993251330,
       runAttempt: 1,
-      steps: Object.values(SKIPPED_UPLOAD_RECOVERY_CONTRACT.steps).map((step: any) => ({ ...step })),
+      steps: [
+        {
+          number: 9,
+          name: 'Create and verify canonical pre-upload attempt ledger',
+          status: 'completed',
+          conclusion: 'failure',
+        },
+        {
+          number: 10,
+          name: 'Upload v0.3.0 draft without publishing',
+          status: 'completed',
+          conclusion: 'skipped',
+        },
+        {
+          number: 11,
+          name: 'Create and verify canonical synchronous upload-success ledger',
+          status: 'completed',
+          conclusion: 'skipped',
+        },
+      ],
     },
   };
 }
@@ -279,6 +325,7 @@ function scannedRolloutIssue(issue: ReturnType<typeof rolloutIssue>) {
   return {
     number: issue.number,
     issueUrl: issue.html_url,
+    state: issue.state,
     marker: validateRolloutLedgerMarker(issue.title, issue.body),
   };
 }
@@ -286,7 +333,7 @@ function scannedRolloutIssue(issue: ReturnType<typeof rolloutIssue>) {
 function recoveryActionsMock({
   latest = priorRun(),
   exact = priorRun(),
-  pages = [{ total_count: 1, jobs: [priorJob()] }],
+  pages = [{ total_count: 5, jobs: historicalIncidentJobs() }],
   detail = priorJob(),
 }: {
   latest?: unknown;
@@ -720,20 +767,94 @@ describe('durable publish attempt ledger', () => {
 });
 
 describe('pinned skipped-upload Actions proof', () => {
-  it('proves the failed incident-shaped run without hardcoding its run or issue ID', async () => {
-    const fetchMock = recoveryActionsMock();
+  it('accepts the open exact historical issue #9 and run 32993251330 fixture', async () => {
+    expect(SKIPPED_UPLOAD_RECOVERY_CONTRACT).toMatchObject({
+      issueNumber: 9,
+      runId: 32993251330,
+      workflowSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
+    });
+    const jobs = historicalIncidentJobs();
+    expect(jobs).toHaveLength(5);
+    expect(jobs.find((job) => job.id === 98255955971)).toMatchObject({
+      id: 98255955971,
+      name: 'Protected v0.3.0 draft upload',
+      steps: [
+        expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+        expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+        {
+          number: 9,
+          name: 'Create and verify canonical pre-upload attempt ledger',
+          status: 'completed',
+          conclusion: 'failure',
+        },
+        {
+          number: 10,
+          name: 'Upload v0.3.0 draft without publishing',
+          status: 'completed',
+          conclusion: 'skipped',
+        },
+        {
+          number: 11,
+          name: 'Create and verify canonical synchronous upload-success ledger',
+          status: 'completed',
+          conclusion: 'skipped',
+        },
+      ],
+    });
+    const fetchMock = recoveryActionsMock({ pages: [{ total_count: 5, jobs }] });
     await expect(verifySkippedUploadRecoveryEvidence({
       uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
       token: 'github-token',
       fetchImpl: fetchMock,
     })).resolves.toEqual(expectedRecoveryEvidence());
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}`,
-      `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}/attempts/1`,
-      `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}/attempts/1/jobs?per_page=100&page=1`,
-      `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/${PRIOR_JOB_ID}`,
+      'https://api.github.com/repos/toml01/eipeek/actions/runs/32993251330',
+      'https://api.github.com/repos/toml01/eipeek/actions/runs/32993251330/attempts/1',
+      'https://api.github.com/repos/toml01/eipeek/actions/runs/32993251330/attempts/1/jobs?per_page=100&page=1',
+      'https://api.github.com/repos/toml01/eipeek/actions/jobs/98255955971',
     ]);
     expectOnlyGitHubRequests(fetchMock);
+  });
+
+  it('rejects closed historical issue #9 before any Actions request', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/issues?state=all')) return jsonResponse([originalAttemptIssue(9, 'closed')]);
+      throw new Error(`Actions request or mutation must not run: ${url}`);
+    });
+    await expect(claimUploadResumeAttempt({
+      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
+    })).rejects.toThrow(/must remain open/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
+  });
+
+  it('rejects any upload-attempt issue other than #9 before any Actions request', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/issues?state=all')) return jsonResponse([originalAttemptIssue(10)]);
+      throw new Error(`Actions request or mutation must not run: ${url}`);
+    });
+    await expect(claimUploadResumeAttempt({
+      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
+    })).rejects.toThrow(/restricted to the reviewed original upload-attempt issue/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
+  });
+
+  it('rejects any original run other than 32993251330 before any Actions request', async () => {
+    const wrongRun = rolloutIssue(9, formatRolloutLedgerMarker('uploadAttempt', {
+      ...ORIGINAL_ROLLOUT,
+      runId: 32993251331,
+      runUrl: 'https://github.com/toml01/eipeek/actions/runs/32993251331',
+    }));
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/issues?state=all')) return jsonResponse([wrongRun]);
+      throw new Error(`Actions request or mutation must not run: ${url}`);
+    });
+    await expect(claimUploadResumeAttempt({
+      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
+    })).rejects.toThrow(/restricted to the reviewed original workflow run/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
   });
 
   it.each([
@@ -982,7 +1103,9 @@ describe('two-stage rollout ledgers', () => {
       { url: issueListUrl, body: [attempt] },
       { url: runApiUrl, body: priorRun() },
       { url: `${runApiUrl}/attempts/1`, body: priorRun() },
-      { url: `${runApiUrl}/attempts/1/jobs?per_page=100&page=1`, body: { total_count: 1, jobs: [priorJob()] } },
+      { url: `${runApiUrl}/attempts/1/jobs?per_page=100&page=1`, body: {
+        total_count: 5, jobs: historicalIncidentJobs(),
+      } },
       { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/${PRIOR_JOB_ID}`, body: priorJob() },
       { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues`, body: resume, status: 201, method: 'POST' },
       { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues/${resume.number}`, body: resume },
@@ -1107,8 +1230,8 @@ describe('two-stage rollout ledgers', () => {
     const wrongLink = rolloutIssue(21, formatRolloutLedgerMarker('recoveryUploadSuccess', {
       ...RECOVERY_ROLLOUT,
       ...UPLOAD_PROOF,
-      uploadAttemptIssueNumber: attempt.number,
-      uploadAttemptIssueUrl: attempt.html_url,
+      uploadAttemptIssueNumber: 9,
+      uploadAttemptIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/9`,
       uploadResumeIssueNumber: 99,
       uploadResumeIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/99`,
     }));

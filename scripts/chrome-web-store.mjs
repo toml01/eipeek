@@ -48,6 +48,8 @@ const LEGACY_ROLLOUT_TAG = 'v0.3.0';
 const WORKFLOW_PATH = '.github/workflows/chrome-web-store.yml';
 const GITHUB_ACTIONS_BOT_ID = 41898282;
 export const SKIPPED_UPLOAD_RECOVERY_CONTRACT = Object.freeze({
+  issueNumber: 9,
+  runId: 32993251330,
   workflowSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
   workflowPath: WORKFLOW_PATH,
   jobName: 'Protected v0.3.0 draft upload',
@@ -562,6 +564,8 @@ function canonicalRecoveryEvidence(input) {
   invariant(parsePositiveId(input.run.repositoryId, 'Recovery repository ID') === EXPECTED_REPOSITORY_ID,
     'Recovery repository numeric ID does not match');
   const runId = parsePositiveId(input.run.runId, 'Prior workflow run ID');
+  invariant(runId === SKIPPED_UPLOAD_RECOVERY_CONTRACT.runId,
+    'Recovery run evidence ID is not recognized');
   const runAttempt = parsePositiveId(input.run.runAttempt, 'Prior workflow run attempt');
   invariant(runAttempt === 1, 'Skipped-upload recovery recognizes only prior run attempt 1');
   const runUrl = `https://github.com/${repository}/actions/runs/${runId}`;
@@ -659,6 +663,8 @@ function rolloutLinks(type, input, shared) {
   invariant(input.uploadAttemptIssueUrl === uploadAttemptIssueUrl, 'Upload attempt issue URL does not match');
   const uploadAttemptLink = { uploadAttemptIssueNumber, uploadAttemptIssueUrl };
   if (type === 'uploadResumeAttempt') {
+    invariant(uploadAttemptIssueNumber === SKIPPED_UPLOAD_RECOVERY_CONTRACT.issueNumber,
+      'Upload resume is restricted to the reviewed original upload-attempt issue');
     return { ...uploadAttemptLink, priorEvidence: canonicalRecoveryEvidence(input.priorEvidence) };
   }
   if (type === 'uploadSuccess') {
@@ -678,6 +684,8 @@ function rolloutLinks(type, input, shared) {
     };
   }
   if (type === 'recoveryUploadSuccess') {
+    invariant(uploadAttemptIssueNumber === SKIPPED_UPLOAD_RECOVERY_CONTRACT.issueNumber,
+      'Recovery upload success is restricted to the reviewed original upload-attempt issue');
     const uploadResumeIssueNumber = parsePositiveId(input.uploadResumeIssueNumber, 'Upload resume issue number');
     const uploadResumeIssueUrl = `https://github.com/${shared.repository}/issues/${uploadResumeIssueNumber}`;
     invariant(input.uploadResumeIssueUrl === uploadResumeIssueUrl, 'Upload resume issue URL does not match');
@@ -799,7 +807,7 @@ function validateRolloutIssue(issue, repository, marker, label, requireOpen = fa
     && issue.user.type === 'Bot',
   `${label} issue was not created by the authenticated GitHub Actions bot`);
   validateRolloutLedgerMarker(issue.title, issue.body);
-  return { number, issueUrl, marker };
+  return { number, issueUrl, state: issue.state, marker };
 }
 
 const ROLLOUT_SHARED_KEYS = Object.freeze([
@@ -1093,12 +1101,18 @@ export async function verifySkippedUploadRecoveryEvidence({
     'A scanned canonical upload-attempt ledger is required for recovery proof');
   invariant(uploadAttempt.marker.type === 'uploadAttempt',
     'Recovery proof requires an upload-attempt/v1 ledger');
-  const marker = validateRolloutLedgerMarker(uploadAttempt.marker.title, uploadAttempt.marker.body);
-  invariant(marker.type === 'uploadAttempt', 'Recovery proof ledger schema is not upload-attempt/v1');
   const issueNumber = parsePositiveId(uploadAttempt.number, 'Upload attempt issue number');
+  invariant(issueNumber === SKIPPED_UPLOAD_RECOVERY_CONTRACT.issueNumber,
+    'Upload attempt issue number has no reviewed skipped-upload recovery contract');
+  invariant(uploadAttempt.state === 'open',
+    'The original upload-attempt issue must remain open for skipped-upload recovery');
   invariant(uploadAttempt.issueUrl === `https://github.com/${EXPECTED_REPOSITORY}/issues/${issueNumber}`,
     'Upload attempt issue URL does not match its number');
+  const marker = validateRolloutLedgerMarker(uploadAttempt.marker.title, uploadAttempt.marker.body);
+  invariant(marker.type === 'uploadAttempt', 'Recovery proof ledger schema is not upload-attempt/v1');
   const attemptPayload = marker.payload;
+  invariant(attemptPayload.runId === SKIPPED_UPLOAD_RECOVERY_CONTRACT.runId,
+    'Upload attempt workflow run ID has no reviewed skipped-upload recovery contract');
   invariant(attemptPayload.runAttempt === 1,
     'Skipped-upload recovery recognizes only original workflow run attempt 1');
   invariant(attemptPayload.workflowSha === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
@@ -1286,6 +1300,12 @@ export async function claimUploadResumeAttempt({ token, fetchImpl = fetch,
   invariant(scan.records.submitAttempt.length === 0,
     'Skipped-upload recovery requires no submit-attempt ledger');
   const attempt = scan.records.uploadAttempt[0];
+  invariant(attempt.number === SKIPPED_UPLOAD_RECOVERY_CONTRACT.issueNumber,
+    'Skipped-upload recovery is restricted to the reviewed original upload-attempt issue');
+  invariant(attempt.state === 'open',
+    'The original upload-attempt issue must remain open for skipped-upload recovery');
+  invariant(attempt.marker.payload.runId === SKIPPED_UPLOAD_RECOVERY_CONTRACT.runId,
+    'Skipped-upload recovery is restricted to the reviewed original workflow run');
   const currentRun = rolloutRunIdentity({ repository: scan.expected.repository, ...identity });
   invariant(currentRun.runAttempt === 1, 'Skipped-upload recovery is restricted to workflow run attempt 1');
   invariant(currentRun.runId !== attempt.marker.payload.runId,
@@ -1336,6 +1356,11 @@ export async function recordRecoveryUploadSuccess({ token, fetchImpl = fetch,
   invariant(scan.records.submitAttempt.length === 0, 'A submit attempt cannot predate recovery upload success');
   const attempt = scan.records.uploadAttempt[0];
   const resume = scan.records.uploadResumeAttempt[0];
+  invariant(attempt.number === SKIPPED_UPLOAD_RECOVERY_CONTRACT.issueNumber
+    && attempt.marker.payload.runId === SKIPPED_UPLOAD_RECOVERY_CONTRACT.runId,
+  'Recovery upload success is restricted to the reviewed original incident ledger');
+  invariant(attempt.state === 'open',
+    'The original upload-attempt issue must remain open before recovery ledger creation');
   const currentRun = rolloutRunIdentity({ repository: scan.expected.repository, ...identity });
   assertSameRolloutRun(currentRun, resume.marker.payload,
     'Recovery upload success run identity');
