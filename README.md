@@ -527,8 +527,12 @@ both the hover screenshot and the packaged zip.
 Chrome Web Store releases use keyless Google Workload Identity Federation and a
 protected GitHub environment. See the
 [publishing runbook](docs/chrome-web-store-publishing.md) for setup, preflight,
-approval, and recovery steps. The workflow must not be dispatched with `publish`
-until that release has explicit approval.
+approval, and recovery steps. The manual `v0.3.0` rollout is deliberately split:
+upload the draft with `upload draft v0.3.0 only`, save only the Dashboard `alarms`
+justification after confirming the detailed description is unchanged, then obtain
+explicit second approval and submit with
+`submit v0.3.0 after saving alarms justification`. Manual combined publishing is
+not available; later release events retain the protected combined path.
 
 ## Permissions
 
