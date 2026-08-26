@@ -17,34 +17,17 @@ service-account key, or generic publishing action.
 - Annotated tag object: `baafbb0244419ff317d8a05cd1f824d33a87fa64`
 - Tagged commit: `09815745f301ddf9e3c913f94959b2c873b2d876`
 
-**No Chrome Web Store upload or submission has occurred.** Protected run
-`32993251330`, at workflow SHA
-`06095bccb8b2fe00756b1cf34704a0d063f03c94`, created canonical open
-`eipeek-cws-upload-attempt/v1` issue #9. GitHub's immediate repository issue-list
-scan did not expose the new issue even though both the create response and direct
-issue GET had validated it. The ledger step therefore failed; the upload and
-upload-success steps were conclusively skipped. Issue #9 is permanent and must
-not be edited, closed, or deleted. The ordinary `upload` operation is now
-intentionally blocked. The narrowly pinned, one-shot `resume-upload` operation
-below is the only automated recovery for this ledger-only incident.
-
-Release `v0.3.0` predates the workflow, so its rollout remains deliberate and
-manual. A separately approved recovery would upload the draft, then pause while
-the Dashboard-only `alarms` permission justification is saved. Only after explicit
-second approval may a separate dispatch submit that draft for review.
+**No Chrome Web Store upload or submission has occurred yet.** Release `v0.3.0`
+predates the workflow, so its rollout remains deliberate and manual: the `upload`
+operation uploads the draft, then pauses while the Dashboard-only `alarms`
+permission justification is saved. Only after that is saved may a separate
+`submit` dispatch send the draft for review.
 
 Chrome Dashboard service-account association is complete. A direct read-only
-service-account `fetchStatus` check is also complete: it reported published version
-`0.2.1`, no pending submission, no warning or takedown, and no recent upload. The
-failed protected run completed WIF authentication and read-only upload planning
-before the ledger-only failure.
-`fetchStatus` does not expose or cryptographically identify unsubmitted draft
-bytes. An absent `lastAsyncUploadState` is therefore not proof that no draft
-exists. The exact upload-attempt and synchronous-success issues, the Dashboard
-inspection, the second typed confirmation, and the second environment approval
-are all required before submission.
+service-account `fetchStatus` check reported published version `0.2.1`, no
+pending submission, no warning or takedown, and no recent upload.
 
-The workflow pins all facts above because this legacy release is mutable. For
+The workflow pins the facts above because this legacy release is mutable. For
 future versions, enable [GitHub immutable releases][github-immutable] before
 publishing the release. Create a draft, attach the one correctly named ZIP, then
 publish it. Future releases must use an annotated strict `vMAJOR.MINOR.PATCH` tag,
@@ -200,18 +183,15 @@ All four **environment variables** are configured; they are not secrets:
 There are no GitHub secrets. The workflow requests a short-lived access token only
 after the environment gate. Read-only status uses the
 `chromewebstore.readonly` scope; upload, submission, and future combined publishing
-use `chromewebstore`. Only mutation jobs receive `issues: write` for their durable
-public ledgers. Only the protected upload job additionally receives `actions: read`,
-and only so `resume-upload` can verify the pinned prior run and job. The status job
-has only `contents: read` and `id-token: write`.
+use `chromewebstore`. Every mutation job needs only `contents: read` and
+`id-token: write`; none of them write repository issues or read Actions history.
 
 ## 3. Preflight and release `v0.3.0`
 
 From **Actions → Chrome Web Store → Run workflow**, use the `main` branch. Manual
-`status`, `upload`, `resume-upload`, and `submit` jobs enforce `refs/heads/main`;
-manual `validate` may run from another ref because it receives no Google
-credentials and cannot mutate Chrome. Do not select ordinary `upload` for this
-release again: permanent issue #9 makes that path fail closed.
+`status`, `upload`, and `submit` jobs enforce `refs/heads/main`; manual `validate`
+may run from another ref because it receives no Google credentials and cannot
+mutate Chrome.
 
 1. Read-only status preflight: set tag `v0.3.0`, operation `status`, and leave
    confirmation empty. Approve the environment wait. This calls only API v2
@@ -225,68 +205,28 @@ release again: permanent issue #9 makes that path fail closed.
    fields. It checks out the resolved release commit without persisted credentials,
    installs and builds it under Node 22 without CWS or Google credentials, and
    requires the normalized ZIP file tree and every file byte to equal that build.
-3. The ordinary upload stage has already made its permanent pre-upload claim.
-   Run `32993251330` failed only because issue #9 was not yet visible in the final
-   repository list scan. Its CWS upload step 10 and success-ledger step 11 were
-   skipped. Do not rerun that run and do not dispatch `operation=upload` again.
-4. **Stop here.** First merge this recovery implementation to `main`, complete and
-   review the read-only `status` and `validate` checks above from that merged
-   revision, and obtain **fresh explicit approval after those checks** to use the
-   one-shot recovery. Approval for the original failed upload run is not approval
-   for recovery. Only then dispatch exactly once with:
+3. Upload the draft:
 
    ```sh
    gh workflow run chrome-web-store.yml --ref main \
      -f release_tag=v0.3.0 \
-     -f operation=resume-upload \
-     -f confirmation='resume upload draft v0.3.0 after verified ledger-only failure'
+     -f operation=upload \
+     -f confirmation='upload draft v0.3.0 only'
    ```
 
-   Approve this run's `chrome-web-store` environment wait. The operation is
-   restricted to `v0.3.0`, `main`, `workflow_dispatch`, and run attempt 1. The
-   confirmation is case-sensitive and whitespace-sensitive. The caller supplies
-   no historical run, job, or issue ID.
-5. After approval, the same protected upload job re-downloads the artifact,
-   revalidates every approved release identity and byte digest, authenticates with
-   WIF, and makes a read-only CWS plan. Recovery requires the plan action to be
-   exactly `upload`. It derives the original run and issue only from the one
-   canonical upload-attempt/v1 ledger and requires no resume, upload-success, or
-   submit-attempt ledger.
-
-   With `actions: read`, the helper checks the latest run record to exclude any
-   later rerun, then checks exact run attempt 1, every paginated job-list page, and
-   a matching direct job GET. Repository ID/name, run ID/attempt/URLs, workflow
-   path, `main`, `workflow_dispatch`, completed/failure state, head SHA, and
-   workflow SHA must match. The only reviewed contract is workflow SHA
-   `06095bccb8b2fe00756b1cf34704a0d063f03c94`, job
-   `Protected v0.3.0 draft upload`, and these exact critical steps:
-
-   - step 9 `Create and verify canonical pre-upload attempt ledger`:
-     `completed` / `failure`;
-   - step 10 `Upload v0.3.0 draft without publishing`:
-     `completed` / `skipped`;
-   - step 11 `Create and verify canonical synchronous upload-success ledger`:
-     `completed` / `skipped`.
-
-   Missing, duplicate, renamed, reordered, null, in-progress, malformed, timed-out,
-   or otherwise unknown Actions data blocks recovery. Logs are deliberately not
-   downloaded: the pinned workflow bytes establish where CWS mutation could occur,
-   and the exact skipped mutation step proves it did not occur.
-
-   Only after this proof does the run create and stably list-verify one canonical
-   `eipeek-cws-upload-resume-attempt/v1` issue. That issue links #9, identifies the
-   current recovery run, and records the canonical prior run/job/step evidence.
-   It is the one-shot pre-mutation claim. The next step calls only the existing API
-   v2 media upload helper; it never calls publish. A linked
-   `eipeek-cws-upload-success/v2` issue is created only for an exact synchronous
-   response with the correct item ID/name, `uploadState: SUCCEEDED`, and
-   `crxVersion: 0.3.0`.
-6. In the Chrome Web Store Developer Dashboard, open the visible `0.3.0` draft.
+   Approve this run's `chrome-web-store` environment wait. The `upload` job
+   re-downloads the artifact, revalidates every approved release identity and byte
+   digest, authenticates with WIF, and plans the mutation from a fresh, read-only
+   `fetchStatus` read. If that plan already shows the target draft or version in
+   place, the job is a safe no-op; otherwise it calls the API v2 media-upload
+   endpoint once and requires a direct synchronous `SUCCEEDED` response for
+   `v0.3.0`. It never calls publish.
+4. In the Chrome Web Store Developer Dashboard, open the visible `0.3.0` draft.
    Compare the **detailed description** and confirm it is unchanged. Save **only**
    the new `alarms` permission justification; do not change listing metadata,
    release assets, distribution, or any other field. Obtain explicit second
    approval to submit after that saved Dashboard state has been reviewed.
-7. Run the second stage with exactly:
+5. Submit the reviewed draft:
 
    ```sh
    gh workflow run chrome-web-store.yml --ref main \
@@ -298,112 +238,43 @@ release again: permanent issue #9 makes that path fail closed.
    Approve this separate run's `chrome-web-store` environment wait. The typed
    confirmation and this second approval are the human attestation that Dashboard
    draft `0.3.0` was visible, its detailed description remained unchanged, and the
-   `alarms` justification was saved.
+   `alarms` justification was saved. The `submit` job revalidates release
+   provenance again, plans the mutation from a fresh `fetchStatus` read, and — if
+   not already pending or published — calls only API v2 publish with:
 
-The submit run performs release and tagged-source provenance validation again,
-then revalidates the release asset after approval. It scans open and closed issues
-and accepts exactly one of two immutable chains: normal upload-attempt/v1 →
-upload-success/v1, or recovery upload-attempt/v1 → upload-resume-attempt/v1 →
-upload-success/v2. The existing submit-attempt/v1 links the original attempt and
-the accepted success issue, so the recovery link remains transitive. Malformed,
-duplicate, mismatched, mixed-version, or incorrectly linked records stop the run.
-It then rechecks store state, creates and stably list-verifies a canonical
-submit-attempt issue, rechecks state immediately before mutation, and calls only
-API v2 publish with:
-
-```json
-{"publishType":"DEFAULT_PUBLISH","skipReview":false,"blockOnWarnings":true}
-```
+   ```json
+   {"publishType":"DEFAULT_PUBLISH","skipReview":false,"blockOnWarnings":true}
+   ```
 
 That submission goes to Chrome review and **automatically becomes public when
 Chrome approves it**. The workflow never cancels a submission and never blindly
 retries an uncertain upload or publish POST. If exact `0.3.0` is already pending or
-published, submission is a read-only no-op after upload-ledger verification.
+published, both `upload` and `submit` are read-only no-ops.
 
-Manual combined publishing is unavailable. Manual `upload`, `resume-upload`, and
-`submit` are restricted to pinned legacy release `v0.3.0`, their exact confirmation
-where applicable, and `main`; recovery has the additional one-shot and run-attempt
-1 restrictions. A `release.published` event for `v0.3.0` is excluded from the
-future publish job and rejected during validation. Later releases retain the
-combined protected upload-and-submit path only from their `release.published`
-event. Manual `validate` and main-only `status` continue to support later tags.
+Manual combined publishing is unavailable. Manual `upload` and `submit` are
+restricted to pinned legacy release `v0.3.0`, their exact confirmation, and `main`.
+A `release.published` event for `v0.3.0` is excluded from the future publish job
+and rejected during validation. Later releases retain the combined protected
+upload-and-submit path only from their `release.published` event. Manual
+`validate` and main-only `status` continue to support later tags.
 
 For later versions, publishing a non-draft, non-prerelease GitHub release triggers
 the same validation and queues the protected publish job automatically. Keep
 release immutability enabled; prepare all assets before publishing the draft.
 
-### Ledger list visibility and state machine
+## Idempotency and recovery
 
-GitHub issue creation and repository issue-list reads can be briefly inconsistent.
-For every newly created staged ledger—upload attempt, normal or recovered upload
-success, recovery resume, and submit attempt—the helper first validates the POST
-response and an exact direct issue GET. Those direct responses prove only the
-created object's identity; they are never inserted into or substituted for a
-repository scan.
-
-The helper then polls the complete open-and-closed issue list, following every
-100-item page, with bounded delays of 0, 1, 2, 4, 8, 15, and 30 seconds. Every poll
-reapplies all canonical title/body/schema, release and CWS identity, linkage,
-open/closed state, bot-author, malformed-record, and duplicate checks. Once the
-exact expected chain is visible, a short delay and one more complete confirmation
-scan must agree. A malformed, mismatched, or duplicate ledger at any poll fails
-immediately. A chain that never becomes visible and stable fails closed before the
-next mutation.
-
-The accepted staged states are:
-
-- upload-attempt/v1 alone: ordinary retry is blocked; only the specifically pinned
-  skipped-upload incident may prove eligibility and claim one resume attempt;
-- upload-attempt/v1 → upload-success/v1: completed normal upload chain;
-- upload-attempt/v1 → upload-resume-attempt/v1: the same recovery run may make its
-  one upload call, but no later recovery can be claimed;
-- upload-attempt/v1 → upload-resume-attempt/v1 → upload-success/v2: completed
-  recovery chain, accepted by the separate submit verifier;
-- either completed chain → submit-attempt/v1: submission was attempted and normal
-  no-retry rules apply.
-
-Success/v1 with a resume ledger, success/v2 without the exact attempt and resume,
-both success versions, wrong run identity, bad links, or any other combination is
-invalid. The normal path remains upload-attempt/v1 → upload-success/v1 and never
-uses the Actions API.
-
-## Recovery and revocation
-
+- `upload`, `submit`, and the automatic `publish` job each start with a plan step
+  that reads live Chrome Web Store status (`fetchStatus`) and decides the mutation
+  from that alone — there is no separate audit record to consult or keep in sync.
+  Calling `upload` again once the store already has the target draft, or `submit`
+  again once it is already pending review or published, is always a safe no-op.
 - Every error after an upload or publish request may have been sent is an unknown
   outcome. This includes a timeout or abort, network exception, non-2xx response,
   non-JSON success, or response identity/schema/version mismatch. Do not rerun
-  the failed stage. Run read-only `status` and inspect the Developer Dashboard. An
-  exact pending or published version is an audited no-op; any other state requires
-  manual resolution.
-- A matching upload-attempt or submit-attempt issue always blocks the ordinary
-  automated retry path unless exact pending/published state makes submission a
-  read-only no-op. The sole exception is the one-shot resume claim for the exact
-  pinned issue #9 incident after all prior-run proof succeeds. The legacy combined
-  path has the same fail-closed retry behavior. Each issue blocks whether open or
-  closed, is repository-wide, does not expire, and is not split by workflow ref.
-  Automation never edits, closes, or deletes it. Issue #9 must remain open,
-  unchanged, and permanent; do not use administrator editing or deletion as a
-  bypass.
-- An upload-attempt issue without its canonical linked synchronous-success issue
-  can never authorize submission. It blocks another ordinary upload. Only issue
-  #9, while it is still the lone staged ledger, is eligible for the pinned proof
-  and one resume claim described above. Do not fabricate, edit, close, or delete a
-  success record. A success issue with no exact pending/published state authorizes
-  submission only through the separately confirmed and approved submit run.
-  `fetchStatus` alone cannot prove which unsubmitted draft bytes are present.
-- Creating upload-resume-attempt/v1 consumes the recovery permanently. If that
-  recovery run then fails, is cancelled, times out, receives an ambiguous CWS
-  response, or does not create upload-success/v2, the attempt + resume chain blocks
-  every second recovery. Do not rerun the job or dispatch `resume-upload` again;
-  inspect the Dashboard and resolve manually. The same rule applies if the success
-  ledger cannot become stably list-visible after a synchronous upload proof.
-- Recovery accepts GitHub's read-only Actions run/job/step metadata as proof and
-  intentionally does not download logs. This exception works only while every
-  pinned REST response is available and exactly recognized. API unavailability,
-  retention loss, timeout, schema ambiguity, or any unknown state blocks recovery;
-  none may be treated as evidence that the upload was skipped.
-- A submit-attempt issue without exact visible pending/published `0.3.0` state is an
-  uncertain outcome and blocks retry. Inspect the Dashboard and resolve manually.
+  the failed stage blindly. Run read-only `status` and inspect the Developer
+  Dashboard. An exact pending or published version is a safe no-op; any other
+  state requires manual resolution there.
 - Resolve policy warnings, takedowns, rejected submissions, staged releases, or
   conflicting active submissions in the Dashboard. The automation fails closed
   and does not cancel anything.
