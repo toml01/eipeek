@@ -42,6 +42,8 @@ const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_ZIP_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_ZIP_TOTAL_BYTES = 256 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+export const LEDGER_VISIBILITY_DELAYS_MS = Object.freeze([0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000]);
+export const LEDGER_CONFIRMATION_DELAY_MS = 1_000;
 const LEGACY_ROLLOUT_TAG = 'v0.3.0';
 const WORKFLOW_PATH = '.github/workflows/chrome-web-store.yml';
 const GITHUB_ACTIONS_BOT_ID = 41898282;
@@ -693,6 +695,42 @@ async function scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs
   return { expected, records, apiRoot };
 }
 
+function validateLedgerDelaySchedule(delays, confirmationDelayMs) {
+  invariant(Array.isArray(delays) && delays.length > 0 && delays.length <= 32,
+    'Ledger visibility delay schedule must contain 1 through 32 entries');
+  invariant(delays.every((delay) => Number.isFinite(delay) && delay >= 0),
+    'Ledger visibility delays must be nonnegative finite milliseconds');
+  invariant(Number.isFinite(confirmationDelayMs) && confirmationDelayMs >= 0,
+    'Ledger confirmation delay must be nonnegative finite milliseconds');
+}
+
+async function waitForStableRolloutLedger({
+  identity,
+  token,
+  fetchImpl,
+  requestTimeoutMs,
+  sleep,
+  visibilityDelaysMs,
+  confirmationDelayMs,
+  matches,
+  label,
+}) {
+  invariant(typeof sleep === 'function', 'Ledger visibility sleeper must be a function');
+  invariant(typeof matches === 'function', 'Ledger visibility matcher must be a function');
+  validateLedgerDelaySchedule(visibilityDelaysMs, confirmationDelayMs);
+  for (const delay of visibilityDelaysMs) {
+    await sleep(delay);
+    const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+    if (!matches(scan.records)) continue;
+    await sleep(confirmationDelayMs);
+    const confirmation = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+    invariant(matches(confirmation.records),
+      `${label} was not stable in the confirmation repository scan`);
+    return confirmation;
+  }
+  throw new Error(`${label} never became visible in the bounded repository scans`);
+}
+
 async function createRolloutLedger({ scan, type, input, token, fetchImpl, requestTimeoutMs }) {
   const marker = formatRolloutLedgerMarker(type, input);
   const created = await githubIssueJson(fetchImpl, `${scan.apiRoot}/issues`, token,
@@ -706,7 +744,11 @@ async function createRolloutLedger({ scan, type, input, token, fetchImpl, reques
 }
 
 export async function claimUploadAttempt({ token, fetchImpl = fetch,
-  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...identity }) {
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  visibilityDelaysMs = LEDGER_VISIBILITY_DELAYS_MS,
+  confirmationDelayMs = LEDGER_CONFIRMATION_DELAY_MS,
+  ...identity }) {
   const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
   invariant(scan.records.uploadAttempt.length === 0,
     'An upload attempt ledger already exists; an automated upload retry is forbidden');
@@ -714,15 +756,23 @@ export async function claimUploadAttempt({ token, fetchImpl = fetch,
     'Later staged rollout ledgers exist without an upload attempt');
   const issue = await createRolloutLedger({ scan, type: 'uploadAttempt', input: identity,
     token, fetchImpl, requestTimeoutMs });
-  const finalScan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
-  invariant(finalScan.records.uploadAttempt.length === 1
-    && finalScan.records.uploadAttempt[0].number === issue.number,
-  'Final upload-attempt ledger verification did not find exactly the created issue');
+  await waitForStableRolloutLedger({
+    identity, token, fetchImpl, requestTimeoutMs, sleep, visibilityDelaysMs, confirmationDelayMs,
+    label: 'Created upload-attempt ledger',
+    matches: (records) => records.uploadAttempt.length === 1
+      && records.uploadAttempt[0].number === issue.number
+      && records.uploadSuccess.length === 0
+      && records.submitAttempt.length === 0,
+  });
   return { issueNumber: issue.number, issueUrl: issue.issueUrl, marker: issue.marker };
 }
 
 export async function recordUploadSuccess({ token, fetchImpl = fetch,
-  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...identity }) {
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  visibilityDelaysMs = LEDGER_VISIBILITY_DELAYS_MS,
+  confirmationDelayMs = LEDGER_CONFIRMATION_DELAY_MS,
+  ...identity }) {
   const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
   invariant(scan.records.uploadAttempt.length === 1, 'Exactly one upload attempt ledger is required');
   invariant(scan.records.uploadSuccess.length === 0, 'An upload success ledger already exists');
@@ -733,12 +783,15 @@ export async function recordUploadSuccess({ token, fetchImpl = fetch,
     uploadAttemptIssueNumber: attempt.number,
     uploadAttemptIssueUrl: attempt.issueUrl,
   }, token, fetchImpl, requestTimeoutMs });
-  const finalScan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
-  invariant(finalScan.records.uploadAttempt.length === 1
-    && finalScan.records.uploadAttempt[0].number === attempt.number
-    && finalScan.records.uploadSuccess.length === 1
-    && finalScan.records.uploadSuccess[0].number === issue.number,
-  'Final upload-success ledger verification did not find exactly the linked records');
+  await waitForStableRolloutLedger({
+    identity, token, fetchImpl, requestTimeoutMs, sleep, visibilityDelaysMs, confirmationDelayMs,
+    label: 'Created upload-success ledger',
+    matches: (records) => records.uploadAttempt.length === 1
+      && records.uploadAttempt[0].number === attempt.number
+      && records.uploadSuccess.length === 1
+      && records.uploadSuccess[0].number === issue.number
+      && records.submitAttempt.length === 0,
+  });
   return { issueNumber: issue.number, issueUrl: issue.issueUrl, marker: issue.marker,
     uploadAttemptIssueNumber: attempt.number, uploadAttemptIssueUrl: attempt.issueUrl };
 }
@@ -763,7 +816,11 @@ export async function verifyUploadLedgers({ token, fetchImpl = fetch,
 }
 
 export async function claimSubmitAttempt({ token, fetchImpl = fetch,
-  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...identity }) {
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  visibilityDelaysMs = LEDGER_VISIBILITY_DELAYS_MS,
+  confirmationDelayMs = LEDGER_CONFIRMATION_DELAY_MS,
+  ...identity }) {
   const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
   invariant(scan.records.uploadAttempt.length === 1, 'Exactly one canonical upload attempt ledger is required');
   invariant(scan.records.uploadSuccess.length === 1, 'Exactly one canonical linked upload success ledger is required');
@@ -778,10 +835,16 @@ export async function claimSubmitAttempt({ token, fetchImpl = fetch,
     uploadSuccessIssueNumber: success.number,
     uploadSuccessIssueUrl: success.issueUrl,
   }, token, fetchImpl, requestTimeoutMs });
-  const finalScan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
-  invariant(finalScan.records.submitAttempt.length === 1
-    && finalScan.records.submitAttempt[0].number === issue.number,
-  'Final submit-attempt ledger verification did not find exactly the created issue');
+  await waitForStableRolloutLedger({
+    identity, token, fetchImpl, requestTimeoutMs, sleep, visibilityDelaysMs, confirmationDelayMs,
+    label: 'Created submit-attempt ledger',
+    matches: (records) => records.uploadAttempt.length === 1
+      && records.uploadAttempt[0].number === attempt.number
+      && records.uploadSuccess.length === 1
+      && records.uploadSuccess[0].number === success.number
+      && records.submitAttempt.length === 1
+      && records.submitAttempt[0].number === issue.number,
+  });
   return { issueNumber: issue.number, issueUrl: issue.issueUrl, marker: issue.marker };
 }
 

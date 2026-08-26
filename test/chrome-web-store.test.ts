@@ -143,6 +143,10 @@ function expectOnlyGitHubRequests(fetchMock: ReturnType<typeof vi.fn>) {
   for (const [url] of fetchMock.mock.calls) expect(String(url)).toMatch(/^https:\/\/api\.github\.com\//);
 }
 
+function noLedgerWait() {
+  return { sleep: vi.fn().mockResolvedValue(undefined) };
+}
+
 function crc32(bytes: Buffer) {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -511,10 +515,13 @@ describe('two-stage rollout ledgers', () => {
       .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse(created, 201))
       .mockResolvedValueOnce(jsonResponse(created))
+      .mockResolvedValueOnce(jsonResponse([created]))
       .mockResolvedValueOnce(jsonResponse([created]));
-    await expect(claimUploadAttempt({ ...ROLLOUT, token: 'github-token', fetchImpl: createFetch }))
+    await expect(claimUploadAttempt({
+      ...ROLLOUT, token: 'github-token', fetchImpl: createFetch, ...noLedgerWait(),
+    }))
       .resolves.toMatchObject({ issueNumber: 10, issueUrl: created.html_url });
-    expect(createFetch).toHaveBeenCalledTimes(4);
+    expect(createFetch).toHaveBeenCalledTimes(5);
     expectOnlyGitHubRequests(createFetch);
 
     for (const state of ['open', 'closed']) {
@@ -523,6 +530,144 @@ describe('two-stage rollout ledgers', () => {
         .rejects.toThrow(/automated upload retry is forbidden/);
       expect(retryFetch).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it.each(['upload attempt', 'upload success', 'submit attempt'] as const)(
+    'waits for delayed %s visibility and then requires a second stable full scan',
+    async (kind) => {
+      const attempt = rolloutIssue(10, formatRolloutLedgerMarker('uploadAttempt', ROLLOUT));
+      const success = rolloutIssue(11, formatRolloutLedgerMarker('uploadSuccess', {
+        ...ROLLOUT,
+        ...UPLOAD_PROOF,
+        uploadAttemptIssueNumber: 10,
+        uploadAttemptIssueUrl: attempt.html_url,
+      }));
+      const submit = rolloutIssue(12, formatRolloutLedgerMarker('submitAttempt', {
+        ...ROLLOUT,
+        uploadAttemptIssueNumber: 10,
+        uploadAttemptIssueUrl: attempt.html_url,
+        uploadSuccessIssueNumber: 11,
+        uploadSuccessIssueUrl: success.html_url,
+      }));
+      const fixture = kind === 'upload attempt'
+        ? { before: [], created: attempt, after: [attempt] }
+        : kind === 'upload success'
+          ? { before: [attempt], created: success, after: [attempt, success] }
+          : { before: [attempt, success], created: submit, after: [attempt, success, submit] };
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(jsonResponse(fixture.before))
+        .mockResolvedValueOnce(jsonResponse(fixture.created, 201))
+        .mockResolvedValueOnce(jsonResponse(fixture.created))
+        .mockResolvedValueOnce(jsonResponse(fixture.before))
+        .mockResolvedValueOnce(jsonResponse(fixture.after))
+        .mockResolvedValueOnce(jsonResponse(fixture.after));
+      const sleep = vi.fn().mockResolvedValue(undefined);
+      const polling = { sleep, visibilityDelaysMs: [0, 17], confirmationDelayMs: 23 };
+      const operation = kind === 'upload attempt'
+        ? claimUploadAttempt({ ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock, ...polling })
+        : kind === 'upload success'
+          ? recordUploadSuccess({
+            ...ROLLOUT, ...UPLOAD_PROOF, token: 'github-token', fetchImpl: fetchMock, ...polling,
+          })
+          : claimSubmitAttempt({ ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock, ...polling });
+      await expect(operation).resolves.toMatchObject({ issueNumber: fixture.created.number });
+      expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 17, 23]);
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+      expect(fetchMock.mock.calls.slice(3).every(([url]) => String(url).includes('/issues?state=all'))).toBe(true);
+      expectOnlyGitHubRequests(fetchMock);
+    },
+  );
+
+  it('fails closed when a directly verified staged ledger never appears in bounded list scans', async () => {
+    const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
+    const created = rolloutIssue(10, marker);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(jsonResponse(created))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    await expect(claimUploadAttempt({
+      ...ROLLOUT,
+      token: 'github-token',
+      fetchImpl: fetchMock,
+      sleep,
+      visibilityDelaysMs: [0, 5],
+      confirmationDelayMs: 7,
+    })).rejects.toThrow(/never became visible/i);
+    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 5]);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('does not treat a direct GET mismatch as repository-list visibility', async () => {
+    const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
+    const created = rolloutIssue(10, marker);
+    const mismatch = { ...created, body: `${created.body}changed` };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(jsonResponse(mismatch));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    await expect(claimUploadAttempt({
+      ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock, sleep,
+    })).rejects.toThrow(/verified uploadAttempt ledger issue marker does not match/i);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['duplicate', 'malformed'] as const)(
+    'fails immediately when a %s staged ledger emerges during visibility polling',
+    async (kind) => {
+      const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
+      const created = rolloutIssue(10, marker);
+      const conflict = kind === 'duplicate'
+        ? rolloutIssue(11, marker)
+        : { ...rolloutIssue(11, marker), title: 'Other title' };
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse(created, 201))
+        .mockResolvedValueOnce(jsonResponse(created))
+        .mockResolvedValueOnce(jsonResponse([created, conflict]));
+      const sleep = vi.fn().mockResolvedValue(undefined);
+      await expect(claimUploadAttempt({
+        ...ROLLOUT,
+        token: 'github-token',
+        fetchImpl: fetchMock,
+        sleep,
+        visibilityDelaysMs: [0, 1],
+      })).rejects.toThrow(kind === 'duplicate' ? /duplicate/i : /canonical title/i);
+      expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0]);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    },
+  );
+
+  it('fully paginates both visibility and confirmation scans', async () => {
+    const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
+    const created = rolloutIssue(1001, marker);
+    const fullPage = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      title: `Unrelated issue ${index + 1}`,
+    }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(fullPage))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(jsonResponse(created))
+      .mockResolvedValueOnce(jsonResponse(fullPage))
+      .mockResolvedValueOnce(jsonResponse([created]))
+      .mockResolvedValueOnce(jsonResponse(fullPage))
+      .mockResolvedValueOnce(jsonResponse([created]));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    await expect(claimUploadAttempt({
+      ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock, sleep,
+    })).resolves.toMatchObject({ issueNumber: 1001 });
+    const listUrls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes('/issues?state=all'));
+    expect(listUrls).toHaveLength(6);
+    expect(listUrls.filter((url) => url.includes('page=2'))).toHaveLength(3);
+    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 1_000]);
   });
 
   it('fails closed on malformed, duplicate, and mismatched staged records', async () => {
@@ -572,9 +717,10 @@ describe('two-stage rollout ledgers', () => {
       .mockResolvedValueOnce(jsonResponse([attempt]))
       .mockResolvedValueOnce(jsonResponse(success, 201))
       .mockResolvedValueOnce(jsonResponse(success))
+      .mockResolvedValueOnce(jsonResponse([attempt, success]))
       .mockResolvedValueOnce(jsonResponse([attempt, success]));
     await expect(recordUploadSuccess({
-      ...ROLLOUT, ...UPLOAD_PROOF, token: 'github-token', fetchImpl: successFetch,
+      ...ROLLOUT, ...UPLOAD_PROOF, token: 'github-token', fetchImpl: successFetch, ...noLedgerWait(),
     }))
       .resolves.toMatchObject({ issueNumber: 11, uploadAttemptIssueNumber: 10 });
     expectOnlyGitHubRequests(successFetch);
@@ -599,8 +745,11 @@ describe('two-stage rollout ledgers', () => {
       .mockResolvedValueOnce(jsonResponse([attempt, success]))
       .mockResolvedValueOnce(jsonResponse(submit, 201))
       .mockResolvedValueOnce(jsonResponse(submit))
+      .mockResolvedValueOnce(jsonResponse([attempt, success, submit]))
       .mockResolvedValueOnce(jsonResponse([attempt, success, submit]));
-    await expect(claimSubmitAttempt({ ...ROLLOUT, token: 'github-token', fetchImpl: submitFetch }))
+    await expect(claimSubmitAttempt({
+      ...ROLLOUT, token: 'github-token', fetchImpl: submitFetch, ...noLedgerWait(),
+    }))
       .resolves.toMatchObject({ issueNumber: 12 });
     expectOnlyGitHubRequests(submitFetch);
   });
