@@ -10,12 +10,18 @@ manifest `description` in `wxt.config.ts`, uploaded with the package.
 
 ## 1. Detailed description
 
-**Character count: update in the Developer Dashboard before publishing**
+**Character count: 2,481 / 16,000**
 
 ```
-EIPeek finds EIP and ERC references anywhere on a web page — EIP-7702, ERC-20, EIP 3074, even bare numbers like 7702 (if you turn that on) — and gives you a hover card with the all the details you need instead of opening a new tab and search!
+EIPeek finds EIP and ERC references anywhere on a web page — EIP-7702, ERC-20, EIP 3074, even bare numbers like 7702 (if you turn that on) — and gives you a hover card with all the details you need instead of opening a new tab and searching!
 
-Hover on "EIP-7702" on a GitHub issue, an X thread, or a pasted-in Discord message and you get the full title ("Set Code for EOAs"), its status (Draft, Review, Last Call, Final, Stagnant, Withdrawn, or Living), its category, and links to the spec, the Ethereum Magicians forum thread, and the GitHub source.
+Hover over "EIP-7702" on a GitHub issue, an X thread, or a pasted-in Discord message and you get the full title ("Set Code for EOAs"), its status (Draft, Review, Last Call, Final, Stagnant, Withdrawn, or Living), its category, and links to the spec, the Ethereum Magicians forum thread, and the GitHub source.
+
+WHAT'S NEW IN 0.3.0
+
+- Automatic daily checks keep the EIP/ERC database current. You can turn them off in settings.
+- Check for database updates manually, view the active database version and update status, and restore the bundled database at any time.
+- Every downloaded update is signature-verified before activation. A failed check leaves the current database unchanged.
 
 FEATURES
 
