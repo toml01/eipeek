@@ -42,6 +42,9 @@ const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_ZIP_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_ZIP_TOTAL_BYTES = 256 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const LEGACY_ROLLOUT_TAG = 'v0.3.0';
+const WORKFLOW_PATH = '.github/workflows/chrome-web-store.yml';
+const GITHUB_ACTIONS_BOT_ID = 41898282;
 const ATTEMPT_MARKER_SCHEMA = 'eipeek-cws-publish-attempt/v1';
 const ATTEMPT_MARKER_TITLE_PREFIX = '[EIPeek CWS pre-mutation attempt v1] SHA-256 ';
 const ATTEMPT_MARKER_BODY_PREFIX = `<!-- ${ATTEMPT_MARKER_SCHEMA} -->
@@ -56,6 +59,27 @@ const ATTEMPT_MARKER_BODY_SUFFIX = `
 
 This issue is never updated or deleted automatically. A matching open or closed issue blocks another mutation attempt for the same release SHA-256.
 `;
+const ROLLOUT_LEDGER_TYPES = Object.freeze({
+  uploadAttempt: Object.freeze({
+    schema: 'eipeek-cws-upload-attempt/v1',
+    titlePrefix: '[EIPeek CWS upload attempt v1] ',
+    heading: 'Chrome Web Store upload attempt ledger',
+    warning: 'This records a pre-upload attempt. It does not prove that Chrome accepted the draft.',
+  }),
+  uploadSuccess: Object.freeze({
+    schema: 'eipeek-cws-upload-success/v1',
+    titlePrefix: '[EIPeek CWS upload success v1] ',
+    heading: 'Chrome Web Store synchronous upload success ledger',
+    warning: 'This records the exact synchronous API response proof that authorized the separate submission gate.',
+  }),
+  submitAttempt: Object.freeze({
+    schema: 'eipeek-cws-submit-attempt/v1',
+    titlePrefix: '[EIPeek CWS submit attempt v1] ',
+    heading: 'Chrome Web Store review submission attempt ledger',
+    warning: 'This records a pre-submit attempt. It does not prove the Chrome Web Store outcome.',
+  }),
+});
+const ROLLOUT_LEDGER_TITLE_ROOT = '[EIPeek CWS ';
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
@@ -102,8 +126,20 @@ export function requirePublishConfirmation(tag, confirmation) {
   invariant(confirmation === `publish ${tag}`, `Publish confirmation must be exactly "publish ${tag}"`);
 }
 
+export function requireUploadConfirmation(tag, confirmation) {
+  parseReleaseTag(tag);
+  invariant(confirmation === `upload draft ${tag} only`,
+    `Upload confirmation must be exactly "upload draft ${tag} only"`);
+}
+
+export function requireSubmitConfirmation(tag, confirmation) {
+  parseReleaseTag(tag);
+  invariant(confirmation === `submit ${tag} after saving alarms justification`,
+    `Submit confirmation must be exactly "submit ${tag} after saving alarms justification"`);
+}
+
 export function requireManualPublishTag(tag) {
-  invariant(tag === 'v0.3.0', 'Manual publish dispatch is restricted to legacy release v0.3.0');
+  invariant(tag === LEGACY_ROLLOUT_TAG, 'Manual Chrome Web Store mutation is restricted to legacy release v0.3.0');
 }
 
 function validateRepositoryName(repository) {
@@ -388,9 +424,371 @@ export async function claimPublishAttempt({
   return { issueNumber: verified.number, issueUrl: verified.issueUrl, marker };
 }
 
+function rolloutSharedIdentity({
+  repository = EXPECTED_REPOSITORY,
+  repositoryId = EXPECTED_REPOSITORY_ID,
+  tag,
+  version,
+  releaseId,
+  assetId,
+  assetName,
+  assetSize,
+  tagObject,
+  commit,
+  sha256,
+  publisherId,
+  extensionId,
+}) {
+  validateRepositoryName(repository);
+  invariant(parsePositiveId(repositoryId, 'Repository ID') === EXPECTED_REPOSITORY_ID,
+    'Repository numeric ID does not match');
+  invariant(tag === LEGACY_ROLLOUT_TAG, 'The staged ledger is restricted to v0.3.0');
+  const tagVersion = parseReleaseTag(tag);
+  invariant(version === tagVersion, 'Release version does not match its tag');
+  const checkedReleaseId = parsePositiveId(releaseId, 'Release ID');
+  const checkedAssetId = parsePositiveId(assetId, 'Asset ID');
+  const checkedAssetSize = parsePositiveId(assetSize, 'Asset size');
+  invariant(assetName === expectedAssetName(version), 'Release asset name does not match its version');
+  validatePublisherId(publisherId);
+  validateExtensionId(extensionId);
+  return {
+    repository,
+    repositoryId: EXPECTED_REPOSITORY_ID,
+    releaseTag: tag,
+    releaseVersion: version,
+    releaseId: checkedReleaseId,
+    releaseUrl: `https://github.com/${repository}/releases/tag/${tag}`,
+    assetId: checkedAssetId,
+    assetName,
+    assetSize: checkedAssetSize,
+    assetUrl: `https://github.com/${repository}/releases/download/${tag}/${assetName}`,
+    tagObject: validateSha(tagObject, 'Annotated tag object'),
+    commit: validateSha(commit, 'Release commit'),
+    commitUrl: `https://github.com/${repository}/commit/${commit}`,
+    sha256: validateSha256(sha256),
+    publisherId,
+    extensionId,
+    cwsItemName: `publishers/${publisherId}/items/${extensionId}`,
+    cwsStatusUrl: `${API_BASE}/v2/publishers/${publisherId}/items/${extensionId}:fetchStatus`,
+  };
+}
+
+function rolloutRunIdentity({ repository, runId, runAttempt, runUrl, workflowRef, workflowSha }) {
+  const checkedRunId = parsePositiveId(runId, 'Workflow run ID');
+  const checkedRunAttempt = parsePositiveId(runAttempt, 'Workflow run attempt');
+  const expectedRunUrl = `https://github.com/${repository}/actions/runs/${checkedRunId}`;
+  invariant(runUrl === expectedRunUrl, 'Workflow run URL does not match its ID');
+  const expectedWorkflowRef = `${repository}/${WORKFLOW_PATH}@refs/heads/main`;
+  invariant(workflowRef === expectedWorkflowRef, 'Workflow ref must identify the main-branch Chrome Web Store workflow');
+  const checkedWorkflowSha = validateSha(workflowSha, 'Workflow SHA');
+  return {
+    runId: checkedRunId,
+    runAttempt: checkedRunAttempt,
+    runUrl,
+    workflowRef,
+    workflowSha: checkedWorkflowSha,
+    workflowUrl: `https://github.com/${repository}/blob/${checkedWorkflowSha}/${WORKFLOW_PATH}`,
+  };
+}
+
+function rolloutBodyPrefix(type) {
+  const definition = ROLLOUT_LEDGER_TYPES[type];
+  invariant(definition !== undefined, `Unknown rollout ledger type ${String(type)}`);
+  return `<!-- ${definition.schema} -->\n# ${definition.heading}\n\n> **WARNING:** ${definition.warning}\n\n\`\`\`json\n`;
+}
+
+function rolloutBodySuffix(type) {
+  return `\n\`\`\`\n\nThis ${type === 'uploadSuccess' ? 'proof' : 'attempt'} issue is never edited, closed, or deleted automatically.\n`;
+}
+
+function rolloutLinks(type, input, shared) {
+  if (type === 'uploadAttempt') return {};
+  const uploadAttemptIssueNumber = parsePositiveId(input.uploadAttemptIssueNumber, 'Upload attempt issue number');
+  const uploadAttemptIssueUrl = `https://github.com/${shared.repository}/issues/${uploadAttemptIssueNumber}`;
+  invariant(input.uploadAttemptIssueUrl === uploadAttemptIssueUrl, 'Upload attempt issue URL does not match');
+  if (type === 'uploadSuccess') {
+    invariant(input.uploadResponseItemId === shared.extensionId,
+      'Upload success proof item ID does not match the CWS target');
+    invariant(input.uploadResponseName === shared.cwsItemName,
+      'Upload success proof item name does not match the CWS target');
+    invariant(input.uploadState === 'SUCCEEDED', 'Upload success proof must record SUCCEEDED');
+    invariant(input.crxVersion === shared.releaseVersion,
+      'Upload success proof CRX version does not match the release');
+    return {
+      uploadAttemptIssueNumber,
+      uploadAttemptIssueUrl,
+      uploadResponseItemId: input.uploadResponseItemId,
+      uploadResponseName: input.uploadResponseName,
+      uploadState: input.uploadState,
+      crxVersion: input.crxVersion,
+    };
+  }
+  const uploadSuccessIssueNumber = parsePositiveId(input.uploadSuccessIssueNumber, 'Upload success issue number');
+  const uploadSuccessIssueUrl = `https://github.com/${shared.repository}/issues/${uploadSuccessIssueNumber}`;
+  invariant(input.uploadSuccessIssueUrl === uploadSuccessIssueUrl, 'Upload success issue URL does not match');
+  return { uploadAttemptIssueNumber, uploadAttemptIssueUrl, uploadSuccessIssueNumber, uploadSuccessIssueUrl };
+}
+
+export function formatRolloutLedgerMarker(type, input) {
+  const definition = ROLLOUT_LEDGER_TYPES[type];
+  invariant(definition !== undefined, `Unknown rollout ledger type ${String(type)}`);
+  const shared = rolloutSharedIdentity(input);
+  const operation = type === 'submitAttempt' ? 'submit' : 'upload';
+  const payload = {
+    schema: definition.schema,
+    operation,
+    ...shared,
+    ...rolloutRunIdentity({ repository: shared.repository, ...input }),
+    ...rolloutLinks(type, input, shared),
+  };
+  const title = `${definition.titlePrefix}${shared.releaseTag} SHA-256 ${shared.sha256}`;
+  const body = `${rolloutBodyPrefix(type)}${JSON.stringify(payload, null, 2)}${rolloutBodySuffix(type)}`;
+  return { type, title, body, payload };
+}
+
+function rolloutTypeFromTitle(title) {
+  invariant(typeof title === 'string', 'Rollout ledger issue title is invalid');
+  for (const [type, definition] of Object.entries(ROLLOUT_LEDGER_TYPES)) {
+    if (title.startsWith(definition.titlePrefix)) return type;
+  }
+  if (title.startsWith(ROLLOUT_LEDGER_TITLE_ROOT)
+    && /(?:upload attempt|upload success|submit attempt)/.test(title)) {
+    throw new Error('Rollout ledger issue title is malformed');
+  }
+  return undefined;
+}
+
+export function validateRolloutLedgerMarker(title, body) {
+  const type = rolloutTypeFromTitle(title);
+  invariant(type !== undefined, 'Rollout ledger issue title is not recognized');
+  const prefix = rolloutBodyPrefix(type);
+  const suffix = rolloutBodySuffix(type);
+  invariant(typeof body === 'string' && body.startsWith(prefix) && body.endsWith(suffix),
+    'Rollout ledger issue body is not recognized');
+  let payload;
+  try {
+    payload = JSON.parse(body.slice(prefix.length, -suffix.length));
+  } catch {
+    throw new Error('Rollout ledger issue body has invalid JSON');
+  }
+  invariant(isRecord(payload), 'Rollout ledger payload is invalid');
+  const marker = formatRolloutLedgerMarker(type, {
+    repository: payload.repository,
+    repositoryId: payload.repositoryId,
+    tag: payload.releaseTag,
+    version: payload.releaseVersion,
+    releaseId: payload.releaseId,
+    assetId: payload.assetId,
+    assetName: payload.assetName,
+    assetSize: payload.assetSize,
+    tagObject: payload.tagObject,
+    commit: payload.commit,
+    sha256: payload.sha256,
+    publisherId: payload.publisherId,
+    extensionId: payload.extensionId,
+    runId: payload.runId,
+    runAttempt: payload.runAttempt,
+    runUrl: payload.runUrl,
+    workflowRef: payload.workflowRef,
+    workflowSha: payload.workflowSha,
+    uploadAttemptIssueNumber: payload.uploadAttemptIssueNumber,
+    uploadAttemptIssueUrl: payload.uploadAttemptIssueUrl,
+    uploadSuccessIssueNumber: payload.uploadSuccessIssueNumber,
+    uploadSuccessIssueUrl: payload.uploadSuccessIssueUrl,
+    uploadResponseItemId: payload.uploadResponseItemId,
+    uploadResponseName: payload.uploadResponseName,
+    uploadState: payload.uploadState,
+    crxVersion: payload.crxVersion,
+  });
+  invariant(marker.title === title && marker.body === body, 'Rollout ledger issue is not in canonical form');
+  return marker;
+}
+
+function validateRolloutIssue(issue, repository, marker, label, requireOpen = false) {
+  invariant(isRecord(issue) && !Object.hasOwn(issue, 'pull_request'), `${label} response is not a repository issue`);
+  const number = parsePositiveId(issue.number, `${label} issue number`);
+  invariant(issue.title === marker.title && issue.body === marker.body, `${label} issue marker does not match`);
+  invariant(issue.state === 'open' || (!requireOpen && issue.state === 'closed'), `${label} issue state is invalid`);
+  const issueUrl = `https://github.com/${repository}/issues/${number}`;
+  invariant(issue.html_url === issueUrl, `${label} issue URL does not match`);
+  invariant(isRecord(issue.user)
+    && issue.user.login === 'github-actions[bot]'
+    && issue.user.id === GITHUB_ACTIONS_BOT_ID
+    && issue.user.type === 'Bot',
+  `${label} issue was not created by the authenticated GitHub Actions bot`);
+  validateRolloutLedgerMarker(issue.title, issue.body);
+  return { number, issueUrl, marker };
+}
+
+const ROLLOUT_SHARED_KEYS = Object.freeze([
+  'repository', 'repositoryId', 'releaseTag', 'releaseVersion', 'releaseId', 'releaseUrl',
+  'assetId', 'assetName', 'assetSize', 'assetUrl', 'tagObject', 'commit', 'commitUrl', 'sha256',
+  'publisherId', 'extensionId', 'cwsItemName', 'cwsStatusUrl',
+]);
+
+function assertRolloutIdentity(payload, expected) {
+  for (const key of ROLLOUT_SHARED_KEYS) {
+    invariant(payload[key] === expected[key], `Rollout ledger ${key} does not match the approved release`);
+  }
+}
+
+async function scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs }) {
+  const expected = rolloutSharedIdentity(identity);
+  const records = { uploadAttempt: [], uploadSuccess: [], submitAttempt: [] };
+  const apiRoot = `https://api.github.com/repos/${expected.repository}`;
+  for (let page = 1; ; page += 1) {
+    const issues = await githubIssueJson(fetchImpl,
+      `${apiRoot}/issues?state=all&sort=created&direction=asc&per_page=100&page=${page}`,
+      token, 'Staged rollout ledger issue list', { requestTimeoutMs });
+    invariant(Array.isArray(issues) && issues.length <= 100, 'Staged rollout ledger issue list response is invalid');
+    for (const issue of issues) {
+      if (!isRecord(issue) || Object.hasOwn(issue, 'pull_request')) continue;
+      let type;
+      try {
+        type = rolloutTypeFromTitle(issue.title);
+      } catch (error) {
+        throw new Error(`Malformed staged rollout ledger issue found; refusing to continue: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (type === undefined && typeof issue.body === 'string'
+        && /^<!-- eipeek-cws-(?:upload-attempt|upload-success|submit-attempt)\//.test(issue.body)) {
+        throw new Error('Malformed staged rollout ledger issue found; schema body has no canonical title');
+      }
+      if (type === undefined) continue;
+      let marker;
+      try {
+        marker = validateRolloutLedgerMarker(issue.title, issue.body);
+        assertRolloutIdentity(marker.payload, expected);
+      } catch (error) {
+        throw new Error(`Malformed or mismatched staged rollout ledger issue found; refusing to continue: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      records[type].push(validateRolloutIssue(issue, expected.repository, marker, 'Staged rollout ledger'));
+    }
+    if (issues.length < 100) break;
+  }
+  for (const [type, found] of Object.entries(records)) {
+    invariant(found.length <= 1, `Duplicate ${type} staged rollout ledger issues found`);
+  }
+  const attempt = records.uploadAttempt[0];
+  const success = records.uploadSuccess[0];
+  const submit = records.submitAttempt[0];
+  if (success) {
+    invariant(attempt !== undefined, 'Upload success ledger exists without its upload attempt ledger');
+    invariant(success.marker.payload.uploadAttemptIssueNumber === attempt.number
+      && success.marker.payload.uploadAttemptIssueUrl === attempt.issueUrl,
+    'Upload success ledger does not link the exact upload attempt ledger');
+    for (const key of ['runId', 'runAttempt', 'runUrl', 'workflowRef', 'workflowSha', 'workflowUrl']) {
+      invariant(success.marker.payload[key] === attempt.marker.payload[key],
+        `Upload success ledger ${key} does not match its upload attempt`);
+    }
+  }
+  if (submit) {
+    invariant(attempt !== undefined && success !== undefined,
+      'Submit attempt ledger exists without both verified upload ledgers');
+    invariant(submit.marker.payload.uploadAttemptIssueNumber === attempt.number
+      && submit.marker.payload.uploadAttemptIssueUrl === attempt.issueUrl
+      && submit.marker.payload.uploadSuccessIssueNumber === success.number
+      && submit.marker.payload.uploadSuccessIssueUrl === success.issueUrl,
+    'Submit attempt ledger does not link the exact upload ledgers');
+  }
+  return { expected, records, apiRoot };
+}
+
+async function createRolloutLedger({ scan, type, input, token, fetchImpl, requestTimeoutMs }) {
+  const marker = formatRolloutLedgerMarker(type, input);
+  const created = await githubIssueJson(fetchImpl, `${scan.apiRoot}/issues`, token,
+    `${type} ledger issue creation`, {
+      method: 'POST', body: { title: marker.title, body: marker.body }, requestTimeoutMs,
+    });
+  const creation = validateRolloutIssue(created, scan.expected.repository, marker, `Created ${type} ledger`, true);
+  const fetched = await githubIssueJson(fetchImpl, `${scan.apiRoot}/issues/${creation.number}`, token,
+    `${type} ledger issue verification`, { requestTimeoutMs });
+  return validateRolloutIssue(fetched, scan.expected.repository, marker, `Verified ${type} ledger`);
+}
+
+export async function claimUploadAttempt({ token, fetchImpl = fetch,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...identity }) {
+  const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+  invariant(scan.records.uploadAttempt.length === 0,
+    'An upload attempt ledger already exists; an automated upload retry is forbidden');
+  invariant(scan.records.uploadSuccess.length === 0 && scan.records.submitAttempt.length === 0,
+    'Later staged rollout ledgers exist without an upload attempt');
+  const issue = await createRolloutLedger({ scan, type: 'uploadAttempt', input: identity,
+    token, fetchImpl, requestTimeoutMs });
+  const finalScan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+  invariant(finalScan.records.uploadAttempt.length === 1
+    && finalScan.records.uploadAttempt[0].number === issue.number,
+  'Final upload-attempt ledger verification did not find exactly the created issue');
+  return { issueNumber: issue.number, issueUrl: issue.issueUrl, marker: issue.marker };
+}
+
+export async function recordUploadSuccess({ token, fetchImpl = fetch,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...identity }) {
+  const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+  invariant(scan.records.uploadAttempt.length === 1, 'Exactly one upload attempt ledger is required');
+  invariant(scan.records.uploadSuccess.length === 0, 'An upload success ledger already exists');
+  invariant(scan.records.submitAttempt.length === 0, 'A submit attempt cannot predate upload success');
+  const attempt = scan.records.uploadAttempt[0];
+  const issue = await createRolloutLedger({ scan, type: 'uploadSuccess', input: {
+    ...identity,
+    uploadAttemptIssueNumber: attempt.number,
+    uploadAttemptIssueUrl: attempt.issueUrl,
+  }, token, fetchImpl, requestTimeoutMs });
+  const finalScan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+  invariant(finalScan.records.uploadAttempt.length === 1
+    && finalScan.records.uploadAttempt[0].number === attempt.number
+    && finalScan.records.uploadSuccess.length === 1
+    && finalScan.records.uploadSuccess[0].number === issue.number,
+  'Final upload-success ledger verification did not find exactly the linked records');
+  return { issueNumber: issue.number, issueUrl: issue.issueUrl, marker: issue.marker,
+    uploadAttemptIssueNumber: attempt.number, uploadAttemptIssueUrl: attempt.issueUrl };
+}
+
+export async function verifyUploadLedgers({ token, fetchImpl = fetch,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...identity }) {
+  const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+  invariant(scan.records.uploadAttempt.length === 1, 'Exactly one canonical upload attempt ledger is required');
+  invariant(scan.records.uploadSuccess.length === 1, 'Exactly one canonical linked upload success ledger is required');
+  const attempt = scan.records.uploadAttempt[0];
+  const success = scan.records.uploadSuccess[0];
+  const submit = scan.records.submitAttempt[0];
+  return {
+    uploadAttemptIssueNumber: attempt.number,
+    uploadAttemptIssueUrl: attempt.issueUrl,
+    uploadSuccessIssueNumber: success.number,
+    uploadSuccessIssueUrl: success.issueUrl,
+    submitAttemptExists: submit !== undefined,
+    submitAttemptIssueNumber: submit?.number,
+    submitAttemptIssueUrl: submit?.issueUrl,
+  };
+}
+
+export async function claimSubmitAttempt({ token, fetchImpl = fetch,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...identity }) {
+  const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+  invariant(scan.records.uploadAttempt.length === 1, 'Exactly one canonical upload attempt ledger is required');
+  invariant(scan.records.uploadSuccess.length === 1, 'Exactly one canonical linked upload success ledger is required');
+  invariant(scan.records.submitAttempt.length === 0,
+    'A submit attempt ledger already exists; inspect exact store status and do not retry');
+  const attempt = scan.records.uploadAttempt[0];
+  const success = scan.records.uploadSuccess[0];
+  const issue = await createRolloutLedger({ scan, type: 'submitAttempt', input: {
+    ...identity,
+    uploadAttemptIssueNumber: attempt.number,
+    uploadAttemptIssueUrl: attempt.issueUrl,
+    uploadSuccessIssueNumber: success.number,
+    uploadSuccessIssueUrl: success.issueUrl,
+  }, token, fetchImpl, requestTimeoutMs });
+  const finalScan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+  invariant(finalScan.records.submitAttempt.length === 1
+    && finalScan.records.submitAttempt[0].number === issue.number,
+  'Final submit-attempt ledger verification did not find exactly the created issue');
+  return { issueNumber: issue.number, issueUrl: issue.issueUrl, marker: issue.marker };
+}
+
 export function validateReleaseEvent(tag, eventReleaseId) {
   parseReleaseTag(tag);
-  invariant(tag !== 'v0.3.0', 'The legacy v0.3.0 release event is excluded; use manual publish with exact confirmation');
+  invariant(tag !== 'v0.3.0',
+    'The legacy v0.3.0 release event is excluded; use the manual staged rollout with exact confirmations');
   return parsePositiveId(eventReleaseId, 'Event release ID');
 }
 
@@ -759,6 +1157,8 @@ export function decidePublishAction(status, requestedVersion) {
     invariant(UPLOAD_STATES.has(status.lastAsyncUploadState),
       `Unexpected upload state ${String(status.lastAsyncUploadState)}`);
     invariant(status.lastAsyncUploadState !== 'IN_PROGRESS', 'Another Chrome Web Store upload is in progress');
+    invariant(status.lastAsyncUploadState !== 'FAILED',
+      'A failed Chrome Web Store upload has an ambiguous draft state; resolve it manually');
   }
 
   const publishedVersion = revisionVersion(status.publishedItemRevisionStatus, 'Published');
@@ -799,6 +1199,61 @@ export function decidePublishAction(status, requestedVersion) {
   return { action: 'upload', reason: 'new-version', version: requestedVersion };
 }
 
+export const decideUploadAction = decidePublishAction;
+
+export function decideSubmitAction(status, requestedVersion, {
+  uploadLedgersVerified = false,
+  submitAttemptExists = false,
+} = {}) {
+  invariant(uploadLedgersVerified === true,
+    'Exact linked upload attempt and synchronous-success ledgers must be verified before submission');
+  parseChromeVersion(requestedVersion, 3);
+  invariant(isRecord(status), 'Chrome Web Store status is invalid');
+  invariant(status.takenDown !== true, 'Chrome Web Store item is taken down; resolve policy enforcement manually');
+  invariant(status.warned !== true, 'Chrome Web Store item has an unresolved policy warning');
+  if (status.lastAsyncUploadState !== undefined) {
+    invariant(UPLOAD_STATES.has(status.lastAsyncUploadState),
+      `Unexpected upload state ${String(status.lastAsyncUploadState)}`);
+    invariant(status.lastAsyncUploadState !== 'IN_PROGRESS', 'Another Chrome Web Store upload is in progress');
+    invariant(status.lastAsyncUploadState !== 'FAILED',
+      'A failed Chrome Web Store upload has an ambiguous draft state; resolve it manually');
+  }
+
+  const publishedVersion = revisionVersion(status.publishedItemRevisionStatus, 'Published');
+  const submittedVersion = revisionVersion(status.submittedItemRevisionStatus, 'Submitted');
+  const submittedState = status.submittedItemRevisionStatus?.state;
+  if (status.publishedItemRevisionStatus !== undefined) {
+    invariant(status.publishedItemRevisionStatus.state === 'PUBLISHED',
+      `Published revision has unexpected state ${String(status.publishedItemRevisionStatus.state)}`);
+  }
+  if (submittedState === 'PENDING_REVIEW') {
+    invariant(submittedVersion === requestedVersion,
+      `A conflicting ${submittedState} submission for version ${submittedVersion} already exists`);
+    return { action: 'noop', reason: 'pending_review', version: requestedVersion };
+  }
+  invariant(submittedState !== 'STAGED',
+    `A staged submission for version ${submittedVersion} requires manual resolution`);
+  invariant(submittedState !== 'PUBLISHED_TO_TESTERS',
+    `A testers-only submission for version ${submittedVersion} requires manual resolution`);
+  if (submittedState === 'PUBLISHED') {
+    invariant(submittedVersion === requestedVersion,
+      `Store status reports an unexpected published submission for version ${submittedVersion}`);
+    return { action: 'noop', reason: 'published', version: requestedVersion };
+  }
+  if (publishedVersion !== undefined) {
+    const comparison = compareChromeVersions(requestedVersion, publishedVersion);
+    invariant(comparison >= 0, `Refusing downgrade from ${publishedVersion} to ${requestedVersion}`);
+    if (comparison === 0) return { action: 'noop', reason: 'already-published', version: requestedVersion };
+  }
+  if (submittedState === 'REJECTED' || submittedState === 'CANCELLED') {
+    invariant(compareChromeVersions(requestedVersion, submittedVersion) > 0,
+      `Refusing version ${requestedVersion} after ${submittedState} submission ${submittedVersion}; create a newer release`);
+  }
+  invariant(!submitAttemptExists,
+    'A submit attempt ledger exists without an exact pending or published store state; resolve manually');
+  return { action: 'submit', reason: 'verified-synchronous-upload', version: requestedVersion };
+}
+
 function cwsHeaders(accessToken, extra = {}) {
   invariant(typeof accessToken === 'string' && accessToken.length > 0, 'CWS access token is required');
   return { Authorization: `Bearer ${accessToken}`, ...extra };
@@ -820,7 +1275,7 @@ async function cwsJson(fetchImpl, url, options, label, requestTimeoutMs) {
 }
 
 function mutationOutcomeUnknown(error) {
-  return new Error('Chrome Web Store mutation outcome is unknown; do not retry or rerun publish blindly. '
+  return new Error('Chrome Web Store mutation outcome is unknown; do not retry or rerun the mutation blindly. '
     + `Inspect fetchStatus and the Developer Dashboard, then resolve manually: ${error instanceof Error ? error.message : String(error)}`,
   { cause: error });
 }
@@ -855,6 +1310,22 @@ export async function planStorePublish(options) {
   return { decision: decidePublishAction(status, options.version), status };
 }
 
+export async function planStoreUpload(options) {
+  const status = await fetchStoreStatus(options);
+  return { decision: decideUploadAction(status, options.version), status };
+}
+
+export async function planStoreSubmit(options) {
+  const status = await fetchStoreStatus(options);
+  return {
+    decision: decideSubmitAction(status, options.version, {
+      uploadLedgersVerified: options.uploadLedgersVerified,
+      submitAttemptExists: options.submitAttemptExists,
+    }),
+    status,
+  };
+}
+
 export function summarizeStatus(status) {
   const publishedVersion = revisionVersion(status.publishedItemRevisionStatus, 'Published');
   const submittedVersion = revisionVersion(status.submittedItemRevisionStatus, 'Submitted');
@@ -870,6 +1341,112 @@ export function summarizeStatus(status) {
       : null,
     lastAsyncUploadState: status.lastAsyncUploadState ?? null,
   };
+}
+
+export async function uploadDraftToStore({
+  publisherId,
+  extensionId,
+  accessToken,
+  zipBytes,
+  version,
+  fetchImpl = fetch,
+  deriveId = deriveExtensionId,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+}) {
+  parseChromeVersion(version, 3);
+  invariant(Buffer.isBuffer(zipBytes) && zipBytes.length > 0, 'Release ZIP bytes are required');
+  const initialStatus = await fetchStoreStatus({
+    publisherId, extensionId, accessToken, fetchImpl, deriveId, requestTimeoutMs,
+  });
+  const decision = decideUploadAction(initialStatus, version);
+  if (decision.action === 'noop') return { decision, status: initialStatus, mutated: false };
+
+  const name = `publishers/${publisherId}/items/${extensionId}`;
+  try {
+    const upload = await boundedRequest(fetchImpl, `${API_BASE}/upload/v2/${name}:upload`, {
+      method: 'POST',
+      headers: cwsHeaders(accessToken, {
+        'Content-Type': 'application/zip',
+        'X-Goog-Upload-Protocol': 'raw',
+        'X-Goog-Upload-File-Name': `eipeek-${version}-chrome.zip`,
+      }),
+      body: zipBytes,
+    }, 'Chrome Web Store upload', async (response) => {
+      if (!response.ok) throw await responseError(response, 'Chrome Web Store upload');
+      try {
+        return await response.json();
+      } catch {
+        throw new Error('Chrome Web Store upload returned a non-JSON success response');
+      }
+    }, requestTimeoutMs);
+    verifyItemIdentity(upload, publisherId, extensionId, 'upload');
+    invariant(upload.uploadState === 'SUCCEEDED',
+      `Staged rollout requires a direct synchronous SUCCEEDED upload response, received ${String(upload.uploadState)}`);
+    invariant(upload.crxVersion === version,
+      'Successful upload package version does not match request');
+    return {
+      decision: { action: 'uploaded', reason: 'synchronous_success', version },
+      upload,
+      mutated: true,
+    };
+  } catch (error) {
+    throw mutationOutcomeUnknown(error);
+  }
+}
+
+export async function submitDraftForReview(options) {
+  invariant(isRecord(options), 'Submit options are required');
+  invariant(!Object.hasOwn(options, 'zipBytes') && !Object.hasOwn(options, 'artifact'),
+    'Review submission does not accept an artifact or ZIP bytes');
+  const {
+    publisherId,
+    extensionId,
+    accessToken,
+    version,
+    uploadLedgersVerified,
+    fetchImpl = fetch,
+    deriveId = deriveExtensionId,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  } = options;
+  parseChromeVersion(version, 3);
+  invariant(uploadLedgersVerified === true, 'Verified upload ledgers are required for review submission');
+  const initialStatus = await fetchStoreStatus({
+    publisherId, extensionId, accessToken, fetchImpl, deriveId, requestTimeoutMs,
+  });
+  const decision = decideSubmitAction(initialStatus, version, { uploadLedgersVerified: true });
+  if (decision.action === 'noop') return { decision, status: initialStatus, mutated: false };
+
+  const name = `publishers/${publisherId}/items/${extensionId}`;
+  try {
+    const publish = await boundedRequest(fetchImpl, `${API_BASE}/v2/${name}:publish`, {
+      method: 'POST',
+      headers: cwsHeaders(accessToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(PUBLISH_REQUEST),
+    }, 'Chrome Web Store publish', async (response) => {
+      if (!response.ok) throw await responseError(response, 'Chrome Web Store publish');
+      try {
+        return await response.json();
+      } catch {
+        throw new Error('Chrome Web Store publish returned a non-JSON success response');
+      }
+    }, requestTimeoutMs);
+    verifyItemIdentity(publish, publisherId, extensionId, 'publish');
+    invariant(['PENDING_REVIEW', 'PUBLISHED'].includes(publish.state),
+      `Publish returned unexpected state ${String(publish.state)}`);
+    if (publish.warningInfo !== undefined) {
+      invariant(isRecord(publish.warningInfo) && Array.isArray(publish.warningInfo.warnings),
+        'Publish returned malformed warning information');
+      invariant(publish.warningInfo.warnings.length === 0,
+        'Publish unexpectedly returned warnings despite blockOnWarnings');
+    }
+    return {
+      decision: { action: 'submitted', reason: publish.state.toLowerCase(), version },
+      publish,
+      mutated: true,
+    };
+  } catch (error) {
+    throw mutationOutcomeUnknown(error);
+  }
 }
 
 export async function publishToStore({
@@ -964,8 +1541,12 @@ export async function publishToStore({
 
 function parseArguments(argv) {
   const [operation, ...rest] = argv;
-  invariant(['validate-release', 'compare-release', 'claim-attempt', 'status', 'plan', 'publish'].includes(operation),
-    'Usage: chrome-web-store.mjs <validate-release|compare-release|claim-attempt|status|plan|publish> [--key value]');
+  invariant([
+    'validate-release', 'compare-release', 'claim-attempt', 'claim-upload-attempt',
+    'record-upload-success', 'verify-upload-ledgers', 'claim-submit-attempt',
+    'status', 'plan', 'plan-upload', 'plan-submit', 'upload-draft', 'submit-review', 'publish',
+  ].includes(operation),
+  'Unknown Chrome Web Store helper operation');
   invariant(rest.length % 2 === 0, 'Every CLI option requires a value');
   const options = {};
   for (let index = 0; index < rest.length; index += 2) {
@@ -982,6 +1563,33 @@ function requireOption(options, name) {
   const value = options[name];
   invariant(typeof value === 'string' && value.length > 0, `--${name} is required`);
   return value;
+}
+
+function rolloutIdentityFromOptions(options) {
+  return {
+    repository: requireOption(options, 'repository'),
+    repositoryId: requireOption(options, 'repository-id'),
+    tag: requireOption(options, 'tag'),
+    version: requireOption(options, 'version'),
+    releaseId: requireOption(options, 'release-id'),
+    assetId: requireOption(options, 'asset-id'),
+    assetName: requireOption(options, 'asset-name'),
+    assetSize: requireOption(options, 'asset-size'),
+    tagObject: requireOption(options, 'tag-object'),
+    commit: requireOption(options, 'commit'),
+    sha256: requireOption(options, 'sha256'),
+    publisherId: requireOption(options, 'publisher-id'),
+    extensionId: requireOption(options, 'extension-id'),
+    runId: requireOption(options, 'run-id'),
+    runAttempt: requireOption(options, 'run-attempt'),
+    runUrl: requireOption(options, 'run-url'),
+    workflowRef: requireOption(options, 'workflow-ref'),
+    workflowSha: requireOption(options, 'workflow-sha'),
+    uploadResponseItemId: options['upload-response-item-id'],
+    uploadResponseName: options['upload-response-name'],
+    uploadState: options['upload-state'],
+    crxVersion: options['crx-version'],
+  };
 }
 
 async function appendOutput(values) {
@@ -1009,9 +1617,12 @@ async function main(argv) {
   const extensionId = options['extension-id'];
   if (operation === 'validate-release') {
     const tag = requireOption(options, 'tag');
-    if (options.operation === 'publish' && options['event-release-id'] === undefined) {
+    invariant(options['event-release-id'] !== undefined || options.operation !== 'publish',
+      'Manual combined publish validation is unavailable');
+    if (options['event-release-id'] === undefined && ['upload', 'submit'].includes(options.operation)) {
       requireManualPublishTag(tag);
-      requirePublishConfirmation(tag, options.confirmation ?? '');
+      if (options.operation === 'upload') requireUploadConfirmation(tag, options.confirmation ?? '');
+      else requireSubmitConfirmation(tag, options.confirmation ?? '');
     }
     const expected = {
       releaseId: options['expected-release-id'],
@@ -1088,6 +1699,45 @@ async function main(argv) {
     return;
   }
 
+  if (['claim-upload-attempt', 'record-upload-success', 'verify-upload-ledgers', 'claim-submit-attempt']
+    .includes(operation)) {
+    const identity = rolloutIdentityFromOptions(options);
+    let result;
+    let title;
+    if (operation === 'claim-upload-attempt') {
+      result = await claimUploadAttempt({ ...identity, token: process.env.GITHUB_TOKEN });
+      title = 'Chrome Web Store staged upload attempt ledger';
+    } else if (operation === 'record-upload-success') {
+      result = await recordUploadSuccess({ ...identity, token: process.env.GITHUB_TOKEN });
+      title = 'Chrome Web Store synchronous upload success ledger';
+    } else if (operation === 'verify-upload-ledgers') {
+      result = await verifyUploadLedgers({ ...identity, token: process.env.GITHUB_TOKEN });
+      title = 'Verified Chrome Web Store upload ledgers';
+    } else {
+      result = await claimSubmitAttempt({ ...identity, token: process.env.GITHUB_TOKEN });
+      title = 'Chrome Web Store staged submit attempt ledger';
+    }
+    await appendOutput(Object.fromEntries(Object.entries({
+      issue_number: result.issueNumber,
+      issue_url: result.issueUrl,
+      upload_attempt_issue_number: result.uploadAttemptIssueNumber,
+      upload_attempt_issue_url: result.uploadAttemptIssueUrl,
+      upload_success_issue_number: result.uploadSuccessIssueNumber,
+      upload_success_issue_url: result.uploadSuccessIssueUrl,
+      submit_attempt_exists: result.submitAttemptExists,
+      submit_attempt_issue_number: result.submitAttemptIssueNumber,
+      submit_attempt_issue_url: result.submitAttemptIssueUrl,
+    }).filter(([, value]) => value !== undefined)));
+    await appendSummary(title, result.marker ? {
+      schema: result.marker.payload.schema,
+      releaseTag: result.marker.payload.releaseTag,
+      sha256: result.marker.payload.sha256,
+      issueNumber: result.issueNumber,
+      issueUrl: result.issueUrl,
+    } : result);
+    return;
+  }
+
   const accessToken = process.env.CWS_ACCESS_TOKEN;
   if (operation === 'status') {
     const status = await fetchStoreStatus({ publisherId, extensionId, accessToken });
@@ -1099,19 +1749,61 @@ async function main(argv) {
   }
 
   const version = requireOption(options, 'version');
-  if (operation === 'plan') {
-    const result = await planStorePublish({ publisherId, extensionId, accessToken, version });
+  if (['plan', 'plan-upload', 'plan-submit'].includes(operation)) {
+    const result = operation === 'plan-submit'
+      ? await planStoreSubmit({
+        publisherId,
+        extensionId,
+        accessToken,
+        version,
+        uploadLedgersVerified: options['upload-ledgers-verified'] === 'true',
+        submitAttemptExists: options['submit-attempt-exists'] === 'true',
+      })
+      : await (operation === 'plan-upload' ? planStoreUpload : planStorePublish)({
+        publisherId, extensionId, accessToken, version,
+      });
     await appendOutput({ action: result.decision.action, reason: result.decision.reason });
-    await appendSummary('Chrome Web Store publish plan (read-only)', {
+    await appendSummary('Chrome Web Store mutation plan (read-only)', {
       version,
       decision: result.decision,
       status: summarizeStatus(result.status),
     });
     return;
   }
+  if (operation === 'submit-review') {
+    invariant(options.artifact === undefined, 'submit-review does not accept --artifact');
+    const result = await submitDraftForReview({
+      publisherId,
+      extensionId,
+      accessToken,
+      version,
+      uploadLedgersVerified: options['upload-ledgers-verified'] === 'true',
+    });
+    await appendSummary('Chrome Web Store review submission result', {
+      version, mutated: result.mutated, decision: result.decision, itemId: extensionId,
+    });
+    return;
+  }
   const zipBytes = await readFile(requireOption(options, 'artifact'));
-  const result = await publishToStore({ publisherId, extensionId, accessToken, zipBytes, version });
-  await appendSummary('Chrome Web Store publish result', {
+  const result = operation === 'upload-draft'
+    ? await uploadDraftToStore({ publisherId, extensionId, accessToken, zipBytes, version })
+    : await publishToStore({ publisherId, extensionId, accessToken, zipBytes, version });
+  if (operation === 'upload-draft') {
+    invariant(result.mutated === true,
+      'Store state changed after the upload-attempt ledger; no upload was performed and no success ledger may be created');
+  }
+  await appendOutput({
+    mutated: result.mutated,
+    ...(operation === 'upload-draft' && result.mutated ? {
+      upload_response_item_id: result.upload.itemId,
+      upload_response_name: result.upload.name,
+      upload_state: result.upload.uploadState,
+      crx_version: result.upload.crxVersion,
+    } : {}),
+  });
+  await appendSummary(operation === 'upload-draft'
+    ? 'Chrome Web Store draft upload result'
+    : 'Chrome Web Store publish result', {
     version,
     mutated: result.mutated,
     decision: result.decision,

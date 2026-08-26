@@ -10,16 +10,17 @@ on:
         required: true
         type: string
       operation:
-        description: Read-only validation/status, or protected upload and publish
+        description: Read-only validation/status, or a protected v0.3.0 rollout stage
         required: true
         default: validate
         type: choice
         options:
           - validate
           - status
-          - publish
+          - upload
+          - submit
       confirmation:
-        description: For publish only, type "publish <tag>" exactly
+        description: Exact phrase documented for the selected upload or submit stage
         required: false
         type: string
 
@@ -41,6 +42,7 @@ jobs:
       release_id: ${{ steps.release.outputs.release_id }}
       asset_id: ${{ steps.release.outputs.asset_id }}
       asset_size: ${{ steps.release.outputs.asset_size }}
+      asset_name: ${{ steps.release.outputs.asset_name }}
       sha256: ${{ steps.release.outputs.sha256 }}
       tag_object: ${{ steps.release.outputs.tag_object }}
       commit: ${{ steps.release.outputs.commit }}
@@ -174,12 +176,321 @@ jobs:
           --publisher-id "${CWS_PUBLISHER_ID}"
           --extension-id "${CWS_EXTENSION_ID}"
 
-  publish:
-    name: Protected upload and publish
+  upload:
+    name: Protected v0.3.0 draft upload
     if: >-
-      (github.event_name == 'release' && github.event.release.tag_name != 'v0.3.0') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
-      inputs.operation == 'publish' && inputs.release_tag == 'v0.3.0')
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      inputs.operation == 'upload' && inputs.release_tag == 'v0.3.0'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: chrome-web-store
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    steps:
+      - name: Check out trusted workflow helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Re-download and revalidate approved release asset
+        shell: bash
+        env: &approved-release
+          GITHUB_TOKEN: ${{ github.token }}
+          ARTIFACT_PATH: ${{ runner.temp }}/eipeek-approved-release.zip
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_ID: ${{ needs.validate.outputs.release_id }}
+          ASSET_ID: ${{ needs.validate.outputs.asset_id }}
+          ASSET_NAME: ${{ needs.validate.outputs.asset_name }}
+          ASSET_SIZE: ${{ needs.validate.outputs.asset_size }}
+          SHA256: ${{ needs.validate.outputs.sha256 }}
+          TAG_OBJECT: ${{ needs.validate.outputs.tag_object }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: &revalidate-release |
+          set -euo pipefail
+          node scripts/chrome-web-store.mjs validate-release \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${RELEASE_TAG}" \
+            --operation validate \
+            --artifact "${ARTIFACT_PATH}" \
+            --expected-release-id "${RELEASE_ID}" \
+            --expected-asset-id "${ASSET_ID}" \
+            --expected-asset-size "${ASSET_SIZE}" \
+            --expected-sha256 "${SHA256}" \
+            --expected-tag-object "${TAG_OBJECT}" \
+            --expected-commit "${RELEASE_COMMIT}"
+
+      - name: Check environment configuration before authentication
+        shell: bash
+        env: &cws-config
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        run: &check-cws-config |
+          set -euo pipefail
+          [[ "${CWS_PUBLISHER_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || {
+            echo 'CWS_PUBLISHER_ID must be copied from Developer Dashboard > Publisher > Settings' >&2; exit 1;
+          }
+          [[ "${CWS_EXTENSION_ID}" == "jeehadjadegokhcgmnnkdcenbpbolkll" ]] || {
+            echo 'CWS_EXTENSION_ID is missing or does not match EIPeek' >&2; exit 1;
+          }
+          [[ "${GCP_WORKLOAD_IDENTITY_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]] || {
+            echo 'GCP_WORKLOAD_IDENTITY_PROVIDER is missing or invalid' >&2; exit 1;
+          }
+          [[ "${GCP_SERVICE_ACCOUNT}" =~ ^[a-z0-9-]+@[a-z0-9.-]+\.iam\.gserviceaccount\.com$ ]] || {
+            echo 'GCP_SERVICE_ACCOUNT is missing or invalid' >&2; exit 1;
+          }
+
+      - name: Authenticate keylessly for draft upload
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: false
+          token_format: access_token
+          access_token_lifetime: 1200s
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+
+      - name: Plan v0.3.0 upload from current store status without mutation
+        id: plan
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: >-
+          node scripts/chrome-web-store.mjs plan-upload
+          --publisher-id "${CWS_PUBLISHER_ID}"
+          --extension-id "${CWS_EXTENSION_ID}"
+          --version "${RELEASE_VERSION}"
+
+      - name: Refuse an in-place upload rerun before mutation
+        if: steps.plan.outputs.action == 'upload' && github.run_attempt != 1
+        run: |
+          echo 'An upload rerun is forbidden. Inspect fetchStatus, the attempt issue, and the Developer Dashboard.' >&2
+          exit 1
+
+      - name: Create and verify canonical pre-upload attempt ledger
+        if: steps.plan.outputs.action == 'upload'
+        id: upload-attempt
+        shell: bash
+        env: &rollout-ledger
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_ID: ${{ needs.validate.outputs.release_id }}
+          ASSET_ID: ${{ needs.validate.outputs.asset_id }}
+          ASSET_NAME: ${{ needs.validate.outputs.asset_name }}
+          ASSET_SIZE: ${{ needs.validate.outputs.asset_size }}
+          TAG_OBJECT: ${{ needs.validate.outputs.tag_object }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          SHA256: ${{ needs.validate.outputs.sha256 }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/chrome-web-store.mjs claim-upload-attempt \
+            --repository "${GITHUB_REPOSITORY}" --repository-id "${REPOSITORY_ID}" \
+            --tag "${RELEASE_TAG}" --version "${RELEASE_VERSION}" \
+            --release-id "${RELEASE_ID}" --asset-id "${ASSET_ID}" \
+            --asset-name "${ASSET_NAME}" --asset-size "${ASSET_SIZE}" \
+            --tag-object "${TAG_OBJECT}" --commit "${RELEASE_COMMIT}" --sha256 "${SHA256}" \
+            --publisher-id "${CWS_PUBLISHER_ID}" --extension-id "${CWS_EXTENSION_ID}" \
+            --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" --run-url "${RUN_URL}" \
+            --workflow-ref "${WORKFLOW_REF}" --workflow-sha "${WORKFLOW_SHA}"
+
+      - name: Upload v0.3.0 draft without publishing
+        if: steps.plan.outputs.action == 'upload'
+        id: upload-draft
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          ARTIFACT_PATH: ${{ runner.temp }}/eipeek-approved-release.zip
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: >-
+          node scripts/chrome-web-store.mjs upload-draft
+          --publisher-id "${CWS_PUBLISHER_ID}"
+          --extension-id "${CWS_EXTENSION_ID}"
+          --artifact "${ARTIFACT_PATH}"
+          --version "${RELEASE_VERSION}"
+
+      - name: Create and verify canonical synchronous upload-success ledger
+        if: steps.upload-draft.outputs.mutated == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_ID: ${{ needs.validate.outputs.release_id }}
+          ASSET_ID: ${{ needs.validate.outputs.asset_id }}
+          ASSET_NAME: ${{ needs.validate.outputs.asset_name }}
+          ASSET_SIZE: ${{ needs.validate.outputs.asset_size }}
+          TAG_OBJECT: ${{ needs.validate.outputs.tag_object }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          SHA256: ${{ needs.validate.outputs.sha256 }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          UPLOAD_RESPONSE_ITEM_ID: ${{ steps.upload-draft.outputs.upload_response_item_id }}
+          UPLOAD_RESPONSE_NAME: ${{ steps.upload-draft.outputs.upload_response_name }}
+          UPLOAD_STATE: ${{ steps.upload-draft.outputs.upload_state }}
+          CRX_VERSION: ${{ steps.upload-draft.outputs.crx_version }}
+        run: |
+          set -euo pipefail
+          node scripts/chrome-web-store.mjs record-upload-success \
+            --repository "${GITHUB_REPOSITORY}" --repository-id "${REPOSITORY_ID}" \
+            --tag "${RELEASE_TAG}" --version "${RELEASE_VERSION}" \
+            --release-id "${RELEASE_ID}" --asset-id "${ASSET_ID}" \
+            --asset-name "${ASSET_NAME}" --asset-size "${ASSET_SIZE}" \
+            --tag-object "${TAG_OBJECT}" --commit "${RELEASE_COMMIT}" --sha256 "${SHA256}" \
+            --publisher-id "${CWS_PUBLISHER_ID}" --extension-id "${CWS_EXTENSION_ID}" \
+            --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" --run-url "${RUN_URL}" \
+            --workflow-ref "${WORKFLOW_REF}" --workflow-sha "${WORKFLOW_SHA}" \
+            --upload-response-item-id "${UPLOAD_RESPONSE_ITEM_ID}" \
+            --upload-response-name "${UPLOAD_RESPONSE_NAME}" \
+            --upload-state "${UPLOAD_STATE}" --crx-version "${CRX_VERSION}"
+
+  submit:
+    name: Protected v0.3.0 review submission
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      inputs.operation == 'submit' && inputs.release_tag == 'v0.3.0'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: chrome-web-store
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    steps:
+      - name: Check out trusted workflow helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Re-download and revalidate release provenance for submission
+        shell: bash
+        env: *approved-release
+        run: *revalidate-release
+
+      - name: Check environment configuration before authentication
+        shell: bash
+        env: *cws-config
+        run: *check-cws-config
+
+      - name: Authenticate keylessly for review submission
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: false
+          token_format: access_token
+          access_token_lifetime: 1200s
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+
+      - name: Verify exact linked upload ledgers before checking submit state
+        id: upload-ledgers
+        shell: bash
+        env: *rollout-ledger
+        run: |
+          set -euo pipefail
+          node scripts/chrome-web-store.mjs verify-upload-ledgers \
+            --repository "${GITHUB_REPOSITORY}" --repository-id "${REPOSITORY_ID}" \
+            --tag "${RELEASE_TAG}" --version "${RELEASE_VERSION}" \
+            --release-id "${RELEASE_ID}" --asset-id "${ASSET_ID}" \
+            --asset-name "${ASSET_NAME}" --asset-size "${ASSET_SIZE}" \
+            --tag-object "${TAG_OBJECT}" --commit "${RELEASE_COMMIT}" --sha256 "${SHA256}" \
+            --publisher-id "${CWS_PUBLISHER_ID}" --extension-id "${CWS_EXTENSION_ID}" \
+            --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" --run-url "${RUN_URL}" \
+            --workflow-ref "${WORKFLOW_REF}" --workflow-sha "${WORKFLOW_SHA}"
+
+      - name: Plan review submission from current store status without mutation
+        id: plan
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          SUBMIT_ATTEMPT_EXISTS: ${{ steps.upload-ledgers.outputs.submit_attempt_exists }}
+        run: >-
+          node scripts/chrome-web-store.mjs plan-submit
+          --publisher-id "${CWS_PUBLISHER_ID}"
+          --extension-id "${CWS_EXTENSION_ID}"
+          --version "${RELEASE_VERSION}"
+          --upload-ledgers-verified true
+          --submit-attempt-exists "${SUBMIT_ATTEMPT_EXISTS:-false}"
+
+      - name: Refuse an in-place submit rerun before mutation
+        if: steps.plan.outputs.action == 'submit' && github.run_attempt != 1
+        run: |
+          echo 'A submit rerun is forbidden. Inspect fetchStatus, the attempt issue, and the Developer Dashboard.' >&2
+          exit 1
+
+      - name: Create and verify canonical pre-submit attempt ledger
+        if: steps.plan.outputs.action == 'submit'
+        shell: bash
+        env: *rollout-ledger
+        run: |
+          set -euo pipefail
+          node scripts/chrome-web-store.mjs claim-submit-attempt \
+            --repository "${GITHUB_REPOSITORY}" --repository-id "${REPOSITORY_ID}" \
+            --tag "${RELEASE_TAG}" --version "${RELEASE_VERSION}" \
+            --release-id "${RELEASE_ID}" --asset-id "${ASSET_ID}" \
+            --asset-name "${ASSET_NAME}" --asset-size "${ASSET_SIZE}" \
+            --tag-object "${TAG_OBJECT}" --commit "${RELEASE_COMMIT}" --sha256 "${SHA256}" \
+            --publisher-id "${CWS_PUBLISHER_ID}" --extension-id "${CWS_EXTENSION_ID}" \
+            --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" --run-url "${RUN_URL}" \
+            --workflow-ref "${WORKFLOW_REF}" --workflow-sha "${WORKFLOW_SHA}"
+
+      - name: Submit verified v0.3.0 draft for review without uploading
+        if: steps.plan.outputs.action == 'submit'
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: >-
+          node scripts/chrome-web-store.mjs submit-review
+          --publisher-id "${CWS_PUBLISHER_ID}"
+          --extension-id "${CWS_EXTENSION_ID}"
+          --version "${RELEASE_VERSION}"
+          --upload-ledgers-verified true
+
+  publish:
+    name: Protected future release upload and publish
+    if: >-
+      github.event_name == 'release' && github.event.release.tag_name != 'v0.3.0'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
