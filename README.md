@@ -524,6 +524,12 @@ Brave still support it. The CDP path additionally requires pipe transport and
 CI runs the same suite on the runner's Google Chrome under `xvfb`, and uploads
 both the hover screenshot and the packaged zip.
 
+Chrome Web Store releases use keyless Google Workload Identity Federation and a
+protected GitHub environment. See the
+[publishing runbook](docs/chrome-web-store-publishing.md) for setup, preflight,
+approval, and recovery steps. The workflow must not be dispatched with `publish`
+until that release has explicit approval.
+
 ## Permissions
 
 The manifest permissions are exactly `storage` and `alarms`. `storage` holds
