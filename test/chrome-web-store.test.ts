@@ -15,19 +15,13 @@ const {
   EXPECTED_REPOSITORY,
   EXPECTED_REPOSITORY_ID,
   PUBLISH_REQUEST,
-  SKIPPED_UPLOAD_RECOVERY_CONTRACT,
-  claimSubmitAttempt,
-  claimUploadAttempt,
-  claimUploadResumeAttempt,
-  claimPublishAttempt,
   compareZipToDirectory,
   compareChromeVersions,
   decidePublishAction,
   decideSubmitAction,
+  decideUploadAction,
   deriveExtensionId,
   fetchStoreStatus,
-  formatAttemptMarker,
-  formatRolloutLedgerMarker,
   parseChromeVersion,
   parseReleaseTag,
   parseZipFiles,
@@ -35,24 +29,17 @@ const {
   planStoreSubmit,
   planStoreUpload,
   publishToStore,
-  recordRecoveryUploadSuccess,
-  recordUploadSuccess,
   requireManualPublishTag,
   requirePublishConfirmation,
-  requireResumeUploadConfirmation,
   requireSubmitConfirmation,
   requireUploadConfirmation,
   submitDraftForReview,
   uploadDraftToStore,
   validateManifest,
-  validateAttemptMarker,
-  validateRolloutLedgerMarker,
   validatePublisherId,
   validateReleaseEvent,
   validateReleaseRecord,
-  verifyUploadLedgers,
   verifyItemIdentity,
-  verifySkippedUploadRecoveryEvidence,
 } = chromeWebStore;
 
 const PUBLISHER_ID = '00000000-0000-4000-8000-000000000000';
@@ -62,55 +49,6 @@ const uploadUrl = `https://chromewebstore.googleapis.com/upload/v2/${name}:uploa
 const publishUrl = `https://chromewebstore.googleapis.com/v2/${name}:publish`;
 const EXPECTED_PUBLISH_REQUEST = { publishType: 'DEFAULT_PUBLISH', skipReview: false, blockOnWarnings: true };
 const deriveExpectedId = () => EXPECTED_EXTENSION_ID;
-const ATTEMPT = {
-  repository: EXPECTED_REPOSITORY,
-  tag: 'v0.3.0',
-  version: '0.3.0',
-  releaseId: 375937330,
-  assetId: 528076253,
-  commit: '1'.repeat(40),
-  sha256: '2'.repeat(64),
-  runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/123456`,
-};
-const ROLLOUT = {
-  repository: EXPECTED_REPOSITORY,
-  repositoryId: EXPECTED_REPOSITORY_ID,
-  tag: 'v0.3.0',
-  version: '0.3.0',
-  releaseId: 375937330,
-  assetId: 528076253,
-  assetName: 'eipeek-0.3.0-chrome.zip',
-  assetSize: 151532,
-  tagObject: '3'.repeat(40),
-  commit: '1'.repeat(40),
-  sha256: '2'.repeat(64),
-  publisherId: PUBLISHER_ID,
-  extensionId: EXPECTED_EXTENSION_ID,
-  runId: 123456,
-  runAttempt: 1,
-  runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/123456`,
-  workflowRef: `${EXPECTED_REPOSITORY}/.github/workflows/chrome-web-store.yml@refs/heads/main`,
-  workflowSha: '4'.repeat(40),
-};
-const UPLOAD_PROOF = {
-  uploadResponseItemId: EXPECTED_EXTENSION_ID,
-  uploadResponseName: name,
-  uploadState: 'SUCCEEDED',
-  crxVersion: '0.3.0',
-};
-const ORIGINAL_ROLLOUT = {
-  ...ROLLOUT,
-  runId: 32993251330,
-  runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/32993251330`,
-  workflowSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
-};
-const RECOVERY_ROLLOUT = {
-  ...ROLLOUT,
-  runId: 135791,
-  runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/135791`,
-  workflowSha: '5'.repeat(40),
-};
-const PRIOR_JOB_ID = 98255955971;
 
 function revision(state: string, version: string) {
   return { state, distributionChannels: [{ deployPercentage: 100, crxVersion: version }] };
@@ -135,255 +73,6 @@ function jsonResponse(body: unknown, statusCode = 200) {
   });
 }
 
-function attemptIssue(number: number, marker = formatAttemptMarker(ATTEMPT), state = 'open') {
-  return {
-    number,
-    title: marker.title,
-    body: marker.body,
-    state,
-    html_url: `https://github.com/${EXPECTED_REPOSITORY}/issues/${number}`,
-  };
-}
-
-function rolloutIssue(number: number, marker: ReturnType<typeof formatRolloutLedgerMarker>, state = 'open') {
-  return {
-    number,
-    title: marker.title,
-    body: marker.body,
-    state,
-    html_url: `https://github.com/${EXPECTED_REPOSITORY}/issues/${number}`,
-    user: { login: 'github-actions[bot]', id: 41898282, type: 'Bot' },
-  };
-}
-
-function priorRun(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 32993251330,
-    run_attempt: 1,
-    url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/32993251330`,
-    html_url: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/32993251330`,
-    repository: { id: EXPECTED_REPOSITORY_ID, full_name: EXPECTED_REPOSITORY },
-    path: '.github/workflows/chrome-web-store.yml',
-    head_branch: 'main',
-    event: 'workflow_dispatch',
-    status: 'completed',
-    conclusion: 'failure',
-    head_sha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
-    ...overrides,
-  };
-}
-
-function priorJob(overrides: Record<string, unknown> = {}) {
-  const runApiUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/32993251330`;
-  return {
-    id: 98255955971,
-    name: 'Protected v0.3.0 draft upload',
-    status: 'completed',
-    conclusion: 'failure',
-    run_id: 32993251330,
-    run_attempt: 1,
-    head_sha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
-    head_branch: 'main',
-    run_url: runApiUrl,
-    url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/98255955971`,
-    html_url: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/32993251330/job/98255955971`,
-    steps: [
-      { number: 1, name: 'Set up job', status: 'completed', conclusion: 'success' },
-      { number: 2, name: 'Check out trusted workflow helper', status: 'completed', conclusion: 'success' },
-      { number: 3, name: 'Use Node.js 22', status: 'completed', conclusion: 'success' },
-      { number: 4, name: 'Re-download and revalidate approved release asset', status: 'completed', conclusion: 'success' },
-      { number: 5, name: 'Check environment configuration before authentication', status: 'completed', conclusion: 'success' },
-      { number: 6, name: 'Authenticate keylessly for draft upload', status: 'completed', conclusion: 'success' },
-      { number: 7, name: 'Plan v0.3.0 upload from current store status without mutation', status: 'completed', conclusion: 'success' },
-      { number: 8, name: 'Refuse an in-place upload rerun before mutation', status: 'completed', conclusion: 'skipped' },
-      {
-        number: 9,
-        name: 'Create and verify canonical pre-upload attempt ledger',
-        status: 'completed',
-        conclusion: 'failure',
-      },
-      {
-        number: 10,
-        name: 'Upload v0.3.0 draft without publishing',
-        status: 'completed',
-        conclusion: 'skipped',
-      },
-      {
-        number: 11,
-        name: 'Create and verify canonical synchronous upload-success ledger',
-        status: 'completed',
-        conclusion: 'skipped',
-      },
-    ],
-    ...overrides,
-  };
-}
-
-function otherPriorJob(id: number, name = `Unrelated completed job ${id}`,
-  overrides: Record<string, unknown> = {}) {
-  return priorJob({
-    id,
-    name,
-    conclusion: 'success',
-    url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/${id}`,
-    html_url: `${ORIGINAL_ROLLOUT.runUrl}/job/${id}`,
-    steps: [],
-    ...overrides,
-  });
-}
-
-function historicalIncidentJobs() {
-  return [
-    otherPriorJob(98255839457, 'Validate immutable release inputs'),
-    priorJob(),
-    otherPriorJob(98255957499, 'Read Chrome Web Store status', { conclusion: 'skipped' }),
-    otherPriorJob(98255957552, 'Protected future release upload and publish', { conclusion: 'skipped' }),
-    otherPriorJob(98255957972, 'Protected v0.3.0 review submission', { conclusion: 'skipped' }),
-  ];
-}
-
-function originalAttemptIssue(number = 9, state = 'open') {
-  return rolloutIssue(number, formatRolloutLedgerMarker('uploadAttempt', ORIGINAL_ROLLOUT), state);
-}
-
-function expectedRecoveryEvidence(job = priorJob(), jobsTotalCount = 5) {
-  return {
-    run: {
-      repository: EXPECTED_REPOSITORY,
-      repositoryId: EXPECTED_REPOSITORY_ID,
-      runId: 32993251330,
-      runAttempt: 1,
-      runUrl: ORIGINAL_ROLLOUT.runUrl,
-      apiUrl: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}`,
-      workflowPath: '.github/workflows/chrome-web-store.yml',
-      workflowSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
-      headSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
-      headBranch: 'main',
-      event: 'workflow_dispatch',
-      status: 'completed',
-      conclusion: 'failure',
-    },
-    job: {
-      jobsTotalCount,
-      jobId: job.id,
-      apiUrl: job.url,
-      jobUrl: job.html_url,
-      jobName: job.name,
-      status: 'completed',
-      conclusion: 'failure',
-      headSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
-      runId: 32993251330,
-      runAttempt: 1,
-      steps: [
-        {
-          number: 9,
-          name: 'Create and verify canonical pre-upload attempt ledger',
-          status: 'completed',
-          conclusion: 'failure',
-        },
-        {
-          number: 10,
-          name: 'Upload v0.3.0 draft without publishing',
-          status: 'completed',
-          conclusion: 'skipped',
-        },
-        {
-          number: 11,
-          name: 'Create and verify canonical synchronous upload-success ledger',
-          status: 'completed',
-          conclusion: 'skipped',
-        },
-      ],
-    },
-  };
-}
-
-function recoveryResumeIssue(number = 10, evidence = expectedRecoveryEvidence()) {
-  const attempt = originalAttemptIssue();
-  return rolloutIssue(number, formatRolloutLedgerMarker('uploadResumeAttempt', {
-    ...RECOVERY_ROLLOUT,
-    uploadAttemptIssueNumber: attempt.number,
-    uploadAttemptIssueUrl: attempt.html_url,
-    priorEvidence: evidence,
-  }));
-}
-
-function recoverySuccessIssue(number = 11, resume = recoveryResumeIssue()) {
-  const attempt = originalAttemptIssue();
-  return rolloutIssue(number, formatRolloutLedgerMarker('recoveryUploadSuccess', {
-    ...RECOVERY_ROLLOUT,
-    ...UPLOAD_PROOF,
-    uploadAttemptIssueNumber: attempt.number,
-    uploadAttemptIssueUrl: attempt.html_url,
-    uploadResumeIssueNumber: resume.number,
-    uploadResumeIssueUrl: resume.html_url,
-  }));
-}
-
-function scannedRolloutIssue(issue: ReturnType<typeof rolloutIssue>) {
-  return {
-    number: issue.number,
-    issueUrl: issue.html_url,
-    state: issue.state,
-    marker: validateRolloutLedgerMarker(issue.title, issue.body),
-  };
-}
-
-function recoveryActionsMock({
-  latest = priorRun(),
-  exact = priorRun(),
-  pages = [{ total_count: 5, jobs: historicalIncidentJobs() }],
-  detail = priorJob(),
-}: {
-  latest?: unknown;
-  exact?: unknown;
-  pages?: unknown[];
-  detail?: unknown;
-} = {}) {
-  const runApiUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}`;
-  return vi.fn(async (url: string, options: RequestInit) => {
-    expect(options.method).toBe('GET');
-    if (url === runApiUrl) return jsonResponse(latest);
-    if (url === `${runApiUrl}/attempts/1`) return jsonResponse(exact);
-    const pageMatch = url.match(new RegExp(`^${runApiUrl}/attempts/1/jobs\\?per_page=100&page=([1-9]\\d*)$`));
-    if (pageMatch) {
-      const page = Number(pageMatch[1]);
-      if (page <= pages.length) return jsonResponse(pages[page - 1]);
-    }
-    if (url === `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/${PRIOR_JOB_ID}`) {
-      return jsonResponse(detail);
-    }
-    throw new Error(`Unexpected URL ${url}`);
-  });
-}
-
-function strictFetchSequence(entries: Array<{
-  url: string;
-  body: unknown;
-  status?: number;
-  method?: string;
-}>) {
-  const remaining = [...entries];
-  const fetchMock = vi.fn(async (url: string, options: RequestInit) => {
-    const next = remaining.shift();
-    if (!next) throw new Error(`Unexpected URL ${url}`);
-    if (url !== next.url) throw new Error(`Unexpected URL ${url}; expected ${next.url}`);
-    if ((options.method ?? 'GET') !== (next.method ?? 'GET')) {
-      throw new Error(`Unexpected method ${options.method} for ${url}`);
-    }
-    return jsonResponse(next.body, next.status);
-  });
-  return { fetchMock, remaining };
-}
-
-function expectOnlyGitHubRequests(fetchMock: ReturnType<typeof vi.fn>) {
-  expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
-  for (const [url] of fetchMock.mock.calls) expect(String(url)).toMatch(/^https:\/\/api\.github\.com\//);
-}
-
-function noLedgerWait() {
-  return { sleep: vi.fn().mockResolvedValue(undefined) };
-}
 
 function crc32(bytes: Buffer) {
   let crc = 0xffffffff;
@@ -476,8 +165,6 @@ describe('release and Chrome version validation', () => {
     expect(() => requireManualPublishTag('v0.4.0')).toThrow(/restricted to legacy/);
     expect(() => requirePublishConfirmation('v0.3.0', 'publish 0.3.0')).toThrow(/exactly/);
     expect(() => requireUploadConfirmation('v0.3.0', 'upload draft v0.3.0 only')).not.toThrow();
-    expect(() => requireResumeUploadConfirmation('v0.3.0',
-      'resume upload draft v0.3.0 after verified ledger-only failure')).not.toThrow();
     expect(() => requireSubmitConfirmation('v0.3.0',
       'submit v0.3.0 after saving alarms justification')).not.toThrow();
     for (const confirmation of [
@@ -486,14 +173,6 @@ describe('release and Chrome version validation', () => {
       'upload draft v0.3.0 only ',
       'upload draft v0.3.0',
     ]) expect(() => requireUploadConfirmation('v0.3.0', confirmation)).toThrow(/exactly/);
-    for (const confirmation of [
-      'Resume upload draft v0.3.0 after verified ledger-only failure',
-      'resume upload draft 0.3.0 after verified ledger-only failure',
-      'resume upload draft v0.3.0 after verified ledger only failure',
-      'resume upload draft v0.3.0 after verified ledger-only failure ',
-    ]) expect(() => requireResumeUploadConfirmation('v0.3.0', confirmation)).toThrow(/exactly/);
-    expect(() => requireResumeUploadConfirmation('v0.4.0',
-      'resume upload draft v0.4.0 after verified ledger-only failure')).toThrow(/restricted to legacy/);
     expect(() => requireManualPublishTag('v0.4.0')).toThrow(/restricted to legacy/);
     for (const confirmation of [
       'Submit v0.3.0 after saving alarms justification',
@@ -523,62 +202,51 @@ describe('release and Chrome version validation', () => {
 });
 
 describe('publishing workflow guards', () => {
-  it('orders each protected ledger before its isolated mutation with least privilege', async () => {
+  it('orders each plan before its isolated mutation with least privilege and no audit ledger', async () => {
     const workflow = await readFile(new URL('../.github/workflows/chrome-web-store.yml', import.meta.url), 'utf8');
     const document = loadYaml(workflow) as any;
     const uploadPlan = workflow.indexOf('- name: Plan v0.3.0 upload from current store status without mutation');
-    const uploadAttempt = workflow.indexOf('- name: Create and verify canonical pre-upload attempt ledger');
     const upload = workflow.indexOf('- name: Upload v0.3.0 draft without publishing');
-    const uploadSuccess = workflow.indexOf('- name: Create and verify canonical synchronous upload-success ledger');
     expect(uploadPlan).toBeGreaterThan(0);
-    expect(uploadPlan).toBeLessThan(uploadAttempt);
-    expect(uploadAttempt).toBeLessThan(upload);
-    expect(upload).toBeLessThan(uploadSuccess);
-    const verify = workflow.indexOf('- name: Verify exact linked upload ledgers before checking submit state');
+    expect(uploadPlan).toBeLessThan(upload);
     const submitPlan = workflow.indexOf('- name: Plan review submission from current store status without mutation');
-    const submitAttempt = workflow.indexOf('- name: Create and verify canonical pre-submit attempt ledger');
     const submit = workflow.indexOf('- name: Submit verified v0.3.0 draft for review without uploading');
-    expect(verify).toBeLessThan(submitPlan);
-    expect(submitPlan).toBeLessThan(submitAttempt);
-    expect(submitAttempt).toBeLessThan(submit);
+    expect(submitPlan).toBeGreaterThan(0);
+    expect(submitPlan).toBeLessThan(submit);
     const futurePlan = workflow.indexOf('- name: Plan from current store status without mutation');
-    const futureLedger = workflow.indexOf('- name: Create and verify public pre-mutation attempt ledger');
     const futureMutation = workflow.indexOf('- name: Upload and submit for automatic publication after review');
-    expect(futurePlan).toBeLessThan(futureLedger);
-    expect(futureLedger).toBeLessThan(futureMutation);
+    expect(futurePlan).toBeGreaterThan(0);
+    expect(futurePlan).toBeLessThan(futureMutation);
     expect(workflow).not.toContain('actions/cache');
     expect(workflow).not.toMatch(/deployInfos|cancelSubmission|cancelPublish|web_accessible_resources/);
+    expect(workflow).not.toMatch(/ledger|issues: write|resume-upload/i);
     expect(document.permissions).toEqual({ contents: 'read' });
     expect(document.jobs.validate.permissions).toBeUndefined();
     expect(document.jobs.status.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
-    expect(document.jobs.upload.permissions).toEqual({
-      contents: 'read', 'id-token': 'write', issues: 'write', actions: 'read',
-    });
-    expect(document.jobs.submit.permissions).toEqual({ contents: 'read', 'id-token': 'write', issues: 'write' });
-    expect(document.jobs.publish.permissions).toEqual({ contents: 'read', 'id-token': 'write', issues: 'write' });
+    expect(document.jobs.upload.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
+    expect(document.jobs.submit.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
+    expect(document.jobs.publish.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
     expect(document.jobs.upload.environment).toBe('chrome-web-store');
     expect(document.jobs.submit.environment).toBe('chrome-web-store');
     expect(document.jobs.publish.environment).toBe('chrome-web-store');
     expect(document.concurrency['cancel-in-progress']).toBe(false);
     const uploadSteps = document.jobs.upload.steps;
     const uploadMutation = uploadSteps.find((step: any) => step.name === 'Upload v0.3.0 draft without publishing');
-    const uploadSuccessStep = uploadSteps.find((step: any) =>
-      step.name === 'Create and verify canonical synchronous upload-success ledger');
+    expect(uploadMutation.if).toBe("steps.plan.outputs.action == 'upload'");
     expect(uploadMutation.run).toContain('upload-draft');
     expect(uploadMutation.run).not.toMatch(/chrome-web-store\.mjs publish(?:\s|$)|submit-review|:publish/);
-    expect(uploadSuccessStep.if).toBe("inputs.operation == 'upload' && steps.upload-draft.outputs.mutated == 'true'");
-    expect(uploadSuccessStep.run).toContain('--upload-state "${UPLOAD_STATE}"');
     const submitMutation = document.jobs.submit.steps.find((step: any) =>
       step.name === 'Submit verified v0.3.0 draft for review without uploading');
+    expect(submitMutation.if).toBe("steps.plan.outputs.action == 'submit'");
     expect(submitMutation.run).toContain('submit-review');
     expect(submitMutation.run).not.toMatch(/--artifact|upload-draft|\/upload\/v2/);
   });
 
-  it('exposes only split manual mutations on main and preserves future release automation', async () => {
+  it('exposes only upload and submit manual mutations on main and preserves future release automation', async () => {
     const workflow = await readFile(new URL('../.github/workflows/chrome-web-store.yml', import.meta.url), 'utf8');
     const document = loadYaml(workflow) as any;
     expect(document.on.workflow_dispatch.inputs.operation.options).toEqual([
-      'validate', 'status', 'upload', 'resume-upload', 'submit',
+      'validate', 'status', 'upload', 'submit',
     ]);
     expect(document.jobs.validate.if).toBeUndefined();
     expect(document.jobs.status.if).toContain("github.ref == 'refs/heads/main'");
@@ -597,1085 +265,15 @@ describe('publishing workflow guards', () => {
     expect(validateRelease.env.CONFIRMATION).toBe('${{ inputs.confirmation }}');
     expect(validateRelease.run).toContain('--operation "${OPERATION}"');
     expect(validateRelease.run).toContain('args+=(--confirmation "${CONFIRMATION}")');
-    const uploadRerunGuard = document.jobs.upload.steps.find((step: any) =>
-      step.name === 'Refuse an in-place upload rerun before mutation');
-    const submitRerunGuard = document.jobs.submit.steps.find((step: any) =>
-      step.name === 'Refuse an in-place submit rerun before mutation');
-    expect(uploadRerunGuard.if).toBe(
-      "inputs.operation == 'upload' && steps.plan.outputs.action == 'upload' && github.run_attempt != 1",
-    );
-    expect(submitRerunGuard.if).toBe("steps.plan.outputs.action == 'submit' && github.run_attempt != 1");
-    const submitPlan = document.jobs.submit.steps.find((step: any) =>
-      step.name === 'Plan review submission from current store status without mutation');
-    expect(submitPlan.env.SUBMIT_ATTEMPT_EXISTS).toBe('${{ steps.upload-ledgers.outputs.submit_attempt_exists }}');
-    expect(submitPlan.run).toContain('--submit-attempt-exists "${SUBMIT_ATTEMPT_EXISTS:-false}"');
     expect(document.jobs.publish.if).toContain("github.event.release.tag_name != 'v0.3.0'");
     expect(document.jobs.publish.if).not.toContain('workflow_dispatch');
     expect(workflow.slice(workflow.indexOf('  upload:'), workflow.indexOf('  submit:'))).not.toContain(':publish');
     expect(workflow.slice(workflow.indexOf('  submit:'), workflow.indexOf('  publish:'))).not.toContain('/upload/v2');
     expect(workflow.slice(workflow.indexOf('  submit:'), workflow.indexOf('  publish:'))).not.toContain('--artifact "${ARTIFACT_PATH}"\n          --version');
-  });
-
-  it('wires one-shot recovery through only the protected upload endpoint and permission boundary', async () => {
-    const workflow = await readFile(new URL('../.github/workflows/chrome-web-store.yml', import.meta.url), 'utf8');
-    const document = loadYaml(workflow) as any;
-    const upload = document.jobs.upload;
-    expect(upload.name).toBe(SKIPPED_UPLOAD_RECOVERY_CONTRACT.jobName);
-    expect(upload.needs).toBe('validate');
-    expect(upload.environment).toBe('chrome-web-store');
-    expect(upload.if).toContain("github.event_name == 'workflow_dispatch'");
-    expect(upload.if).toContain("github.ref == 'refs/heads/main'");
-    expect(upload.if).toContain("inputs.operation == 'resume-upload'");
-    expect(upload.if).toContain('github.run_attempt == 1');
-    expect(Object.entries(document.jobs)
-      .filter(([, job]: any) => job.permissions?.actions !== undefined)
-      .map(([key]) => key)).toEqual(['upload']);
-    expect(upload.permissions.actions).toBe('read');
-
-    const steps = upload.steps;
-    const stepIndex = (name: string) => steps.findIndex((step: any) => step.name === name);
-    const revalidate = stepIndex('Re-download and revalidate approved release asset');
-    const authenticate = stepIndex('Authenticate keylessly for draft upload');
-    const plan = stepIndex('Plan v0.3.0 upload from current store status without mutation');
-    const requirePlan = stepIndex('Require exact upload plan for one-shot recovery');
-    const resume = stepIndex('Prove skipped prior upload and create canonical one-shot resume ledger');
-    const mutate = stepIndex('Upload v0.3.0 draft without publishing');
-    const success = stepIndex('Create and verify canonical recovered synchronous upload-success/v2 ledger');
-    expect([revalidate, authenticate, plan, requirePlan, resume, mutate, success].every((index) => index >= 0)).toBe(true);
-    expect(revalidate).toBeLessThan(authenticate);
-    expect(authenticate).toBeLessThan(plan);
-    expect(plan).toBeLessThan(requirePlan);
-    expect(requirePlan).toBeLessThan(resume);
-    expect(resume).toBeLessThan(mutate);
-    expect(mutate).toBeLessThan(success);
-
-    const planGuard = steps[requirePlan];
-    expect(planGuard.if).toBe("inputs.operation == 'resume-upload' && steps.plan.outputs.action != 'upload'");
-    const resumeClaim = steps[resume];
-    expect(resumeClaim.if).toBe("inputs.operation == 'resume-upload' && steps.plan.outputs.action == 'upload'");
-    expect(resumeClaim.run).toContain('claim-upload-resume-attempt');
-    expect(resumeClaim.run).not.toMatch(/prior-run|prior-job|attempt-issue|issue-number/);
-    const uploadMutation = steps[mutate];
-    expect(uploadMutation.if).toContain("inputs.operation == 'resume-upload'");
-    expect(uploadMutation.run).toContain('chrome-web-store.mjs upload-draft');
-    expect(uploadMutation.run).not.toMatch(/submit-review|chrome-web-store\.mjs publish(?:\s|$)|:publish/);
-    const recoverySuccess = steps[success];
-    expect(recoverySuccess.if).toBe(
-      "inputs.operation == 'resume-upload' && steps.upload-draft.outputs.mutated == 'true'",
-    );
-    expect(recoverySuccess.run).toContain('record-recovery-upload-success');
-    const uploadJobText = workflow.slice(workflow.indexOf('  upload:'), workflow.indexOf('  submit:'));
-    expect(uploadJobText).not.toMatch(/submit-review|:publish|deployInfos|cancel/i);
-    const submitJobText = workflow.slice(workflow.indexOf('  submit:'), workflow.indexOf('  publish:'));
-    expect(submitJobText).not.toMatch(/claim-upload-resume|record-recovery-upload-success|upload-draft|\/upload\/v2/);
-  });
-});
-
-describe('durable publish attempt ledger', () => {
-  it('formats and validates a canonical injection-safe marker', () => {
-    const marker = formatAttemptMarker(ATTEMPT);
-    expect(validateAttemptMarker(marker.title, marker.body)).toEqual(marker.payload);
-    expect(marker.body).toContain('pre-mutation publish attempt');
-    expect(marker.body).toContain('administrator edit or deletion is the only bypass');
-    expect(() => formatAttemptMarker({ ...ATTEMPT, tag: 'v0.3.0\nissue' })).toThrow(/strict/);
-    expect(() => validateAttemptMarker(marker.title, `${marker.body}changed`)).toThrow(/not recognized/);
-  });
-
-  it('lists all issues, ignores pull requests, then creates and fetches the exact issue', async () => {
-    const marker = formatAttemptMarker(ATTEMPT);
-    const pullRequest = { ...attemptIssue(8, marker), pull_request: { url: 'https://api.github.com/pulls/8' } };
-    const created = attemptIssue(9, marker);
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([pullRequest]))
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(created));
-    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: fetchMock }))
-      .resolves.toMatchObject({ issueNumber: 9, issueUrl: created.html_url });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all&sort=created&direction=asc&per_page=100&page=1');
-    expect(fetchMock.mock.calls[1]![1]).toMatchObject({
-      method: 'POST',
-      body: JSON.stringify({ title: marker.title, body: marker.body }),
-    });
-    expect(fetchMock.mock.calls[2]![0]).toMatch('/issues/9');
-    expectOnlyGitHubRequests(fetchMock);
-  });
-
-  it.each(['open', 'closed'])('blocks a prior %s marker without creating an issue', async (state) => {
-    const priorRunMarker = formatAttemptMarker({
-      ...ATTEMPT, runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/999`,
-    });
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([attemptIssue(4, priorRunMarker, state)]));
-    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: fetchMock }))
-      .rejects.toThrow(/already exists/);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expectOnlyGitHubRequests(fetchMock);
-  });
-
-  it('paginates repository-wide issue history and finds an older marker', async () => {
-    const firstPage = Array.from({ length: 100 }, (_, index) => ({ number: index + 1, title: `Other issue ${index}` }));
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(firstPage))
-      .mockResolvedValueOnce(jsonResponse([attemptIssue(101, undefined, 'closed')]));
-    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: fetchMock }))
-      .rejects.toThrow(/already exists/);
-    expect(fetchMock.mock.calls[1]![0]).toContain('page=2');
-    expectOnlyGitHubRequests(fetchMock);
-  });
-
-  it('stops on issue-list and issue-verification errors', async () => {
-    const listFailure = vi.fn().mockResolvedValueOnce(jsonResponse({ message: 'forbidden' }, 403));
-    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: listFailure }))
-      .rejects.toThrow(/issue list failed with HTTP 403/);
-    expectOnlyGitHubRequests(listFailure);
-
-    const created = attemptIssue(12);
-    const verifyFailure = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse({ message: 'unavailable' }, 503));
-    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: verifyFailure }))
-      .rejects.toThrow(/verification failed with HTTP 503/);
-    expectOnlyGitHubRequests(verifyFailure);
-  });
-
-  it('stops on create errors, timeouts, and malformed success responses', async () => {
-    const createError = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse({ message: 'denied' }, 403));
-    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: createError }))
-      .rejects.toThrow(/creation failed with HTTP 403/);
-    expectOnlyGitHubRequests(createError);
-
-    const createTimeout = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockImplementationOnce(() => new Promise(() => {}));
-    await expect(claimPublishAttempt({
-      ...ATTEMPT, token: 'github-token', fetchImpl: createTimeout, requestTimeoutMs: 5,
-    })).rejects.toThrow(/creation timed out/);
-    expectOnlyGitHubRequests(createTimeout);
-
-    const malformedCreate = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse({ number: 13, state: 'open' }, 201));
-    await expect(claimPublishAttempt({ ...ATTEMPT, token: 'github-token', fetchImpl: malformedCreate }))
-      .rejects.toThrow(/marker does not match/);
-    expect(malformedCreate).toHaveBeenCalledTimes(2);
-    expectOnlyGitHubRequests(malformedCreate);
-  });
-});
-
-describe('pinned skipped-upload Actions proof', () => {
-  it('accepts the open exact historical issue #9 and run 32993251330 fixture', async () => {
-    expect(SKIPPED_UPLOAD_RECOVERY_CONTRACT).toMatchObject({
-      issueNumber: 9,
-      runId: 32993251330,
-      workflowSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
-    });
-    const jobs = historicalIncidentJobs();
-    expect(jobs).toHaveLength(5);
-    expect(jobs.map((job) => job.id)).toEqual([
-      98255839457,
-      98255955971,
-      98255957499,
-      98255957552,
-      98255957972,
-    ]);
-    expect(priorRun()).not.toHaveProperty('workflow_sha');
-    expect(jobs.find((job) => job.id === 98255955971)).toMatchObject({
-      id: 98255955971,
-      name: 'Protected v0.3.0 draft upload',
-      steps: [
-        expect.anything(), expect.anything(), expect.anything(), expect.anything(),
-        expect.anything(), expect.anything(), expect.anything(), expect.anything(),
-        {
-          number: 9,
-          name: 'Create and verify canonical pre-upload attempt ledger',
-          status: 'completed',
-          conclusion: 'failure',
-        },
-        {
-          number: 10,
-          name: 'Upload v0.3.0 draft without publishing',
-          status: 'completed',
-          conclusion: 'skipped',
-        },
-        {
-          number: 11,
-          name: 'Create and verify canonical synchronous upload-success ledger',
-          status: 'completed',
-          conclusion: 'skipped',
-        },
-      ],
-    });
-    const fetchMock = recoveryActionsMock({ pages: [{ total_count: 5, jobs }] });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).resolves.toEqual(expectedRecoveryEvidence());
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      'https://api.github.com/repos/toml01/eipeek/actions/runs/32993251330',
-      'https://api.github.com/repos/toml01/eipeek/actions/runs/32993251330/attempts/1',
-      'https://api.github.com/repos/toml01/eipeek/actions/runs/32993251330/attempts/1/jobs?per_page=100&page=1',
-      'https://api.github.com/repos/toml01/eipeek/actions/jobs/98255955971',
-    ]);
-    expectOnlyGitHubRequests(fetchMock);
-  });
-
-  it('rejects closed historical issue #9 before any Actions request', async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes('/issues?state=all')) return jsonResponse([originalAttemptIssue(9, 'closed')]);
-      throw new Error(`Actions request or mutation must not run: ${url}`);
-    });
-    await expect(claimUploadResumeAttempt({
-      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
-    })).rejects.toThrow(/must remain open/i);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
-  });
-
-  it('rejects any upload-attempt issue other than #9 before any Actions request', async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes('/issues?state=all')) return jsonResponse([originalAttemptIssue(10)]);
-      throw new Error(`Actions request or mutation must not run: ${url}`);
-    });
-    await expect(claimUploadResumeAttempt({
-      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
-    })).rejects.toThrow(/restricted to the reviewed original upload-attempt issue/i);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
-  });
-
-  it('rejects any original run other than 32993251330 before any Actions request', async () => {
-    const wrongRun = rolloutIssue(9, formatRolloutLedgerMarker('uploadAttempt', {
-      ...ORIGINAL_ROLLOUT,
-      runId: 32993251331,
-      runUrl: 'https://github.com/toml01/eipeek/actions/runs/32993251331',
-    }));
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes('/issues?state=all')) return jsonResponse([wrongRun]);
-      throw new Error(`Actions request or mutation must not run: ${url}`);
-    });
-    await expect(claimUploadResumeAttempt({
-      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
-    })).rejects.toThrow(/restricted to the reviewed original workflow run/i);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
-  });
-
-  it.each([
-    ['repository ID', { repository: { id: 1, full_name: EXPECTED_REPOSITORY } }, /repository identity/i],
-    ['repository name', { repository: { id: EXPECTED_REPOSITORY_ID, full_name: 'attacker/eipeek' } }, /repository identity/i],
-    ['run ID', { id: ORIGINAL_ROLLOUT.runId + 1 }, /run ID does not match/i],
-    ['run URL', { html_url: `${ORIGINAL_ROLLOUT.runUrl}/wrong` }, /HTML URL does not match/i],
-    ['workflow path', { path: '.github/workflows/other.yml' }, /workflow path/i],
-    ['branch', { head_branch: 'release' }, /branch must be main/i],
-    ['event', { event: 'push' }, /event must be workflow_dispatch/i],
-    ['head SHA', { head_sha: 'a'.repeat(40) }, /head SHA/i],
-    ['workflow SHA', { workflow_sha: 'a'.repeat(40) }, /workflow SHA/i],
-    ['status', { status: 'in_progress' }, /not completed/i],
-    ['conclusion', { conclusion: 'success' }, /failure/i],
-    ['later run attempt', { run_attempt: 2 }, /later rerun/i],
-  ] as const)('blocks a prior run with mismatched %s', async (_label, override, message) => {
-    const fetchMock = recoveryActionsMock({ latest: priorRun(override) });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).rejects.toThrow(message);
-  });
-
-  it('blocks an unrecognized ledger workflow SHA before making any Actions request', async () => {
-    const marker = formatRolloutLedgerMarker('uploadAttempt', {
-      ...ORIGINAL_ROLLOUT,
-      workflowSha: 'a'.repeat(40),
-    });
-    const issue = rolloutIssue(9, marker);
-    const fetchMock = vi.fn(() => { throw new Error('network must not run'); });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(issue), token: 'github-token', fetchImpl: fetchMock,
-    })).rejects.toThrow(/no reviewed skipped-upload recovery contract/i);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('requires the exact attempt response to match the latest non-rerun response', async () => {
-    const fetchMock = recoveryActionsMock({ exact: priorRun({ status: 'in_progress', conclusion: null }) });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).rejects.toThrow(/exact prior workflow run attempt is not completed/i);
-  });
-
-  it('validates every job page count and accepts a complete multipage job list', async () => {
-    const firstPage = [priorJob(), ...Array.from({ length: 99 }, (_, index) => otherPriorJob(200_000 + index))];
-    const lastJob = otherPriorJob(300_000);
-    const fetchMock = recoveryActionsMock({
-      pages: [
-        { total_count: 101, jobs: firstPage },
-        { total_count: 101, jobs: [lastJob] },
-      ],
-    });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).resolves.toEqual(expectedRecoveryEvidence(priorJob(), 101));
-    expect(fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('/jobs?')))
-      .toEqual([
-        `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}/attempts/1/jobs?per_page=100&page=1`,
-        `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}/attempts/1/jobs?per_page=100&page=2`,
-      ]);
-  });
-
-  it.each([
-    ['short page', [{ total_count: 2, jobs: [priorJob()] }], /pagination does not match total_count/i],
-    ['duplicate job ID', [{ total_count: 2, jobs: [priorJob(), priorJob()] }], /duplicate job ID/i],
-    ['changed total', [
-      { total_count: 101, jobs: [priorJob(), ...Array.from({ length: 99 }, (_, index) => otherPriorJob(400_000 + index))] },
-      { total_count: 102, jobs: [otherPriorJob(500_000)] },
-    ], /pagination count changed/i],
-  ] as const)('blocks malformed job pagination: %s', async (_label, pages, message) => {
-    const fetchMock = recoveryActionsMock({ pages: [...pages] });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).rejects.toThrow(message);
-  });
-
-  it.each([
-    ['missing protected job', [otherPriorJob(600_000)], /exactly one pinned protected upload job/i],
-    ['duplicated protected job', [priorJob(), otherPriorJob(600_001, SKIPPED_UPLOAD_RECOVERY_CONTRACT.jobName)],
-      /exactly one pinned protected upload job/i],
-    ['in-progress job', [priorJob({ status: 'in_progress' })], /job.*not completed/i],
-    ['null job conclusion', [priorJob({ conclusion: null })], /conclusion is null or unrecognized/i],
-  ] as const)('blocks ambiguous job identity or state: %s', async (_label, jobs, message) => {
-    const fetchMock = recoveryActionsMock({ pages: [{ total_count: jobs.length, jobs }] });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).rejects.toThrow(message);
-  });
-
-  it('requires direct job GET bytes to match the paginated job object', async () => {
-    const fetchMock = recoveryActionsMock({ detail: priorJob({ conclusion: 'success' }) });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).rejects.toThrow(/does not exactly match the paginated job list/i);
-  });
-
-  it.each([
-    ['ledger did not fail', 9, { conclusion: 'success' }, /step 9 did not conclusively fail/i],
-    ['upload ran', 10, { conclusion: 'success' }, /step 10 did not conclusively skip/i],
-    ['upload conclusion unknown', 10, { conclusion: null }, /conclusion is null or unrecognized/i],
-    ['upload in progress', 10, { status: 'in_progress', conclusion: null }, /step 10 is not completed/i],
-    ['success ledger ran', 11, { conclusion: 'success' }, /step 11 did not conclusively skip/i],
-    ['renamed upload', 10, { name: 'Upload renamed' }, /missing, renamed, duplicated, or reordered/i],
-    ['renumbered upload', 10, { number: 12 }, /duplicated or reordered/i],
-  ] as const)('blocks prior mutation-step ambiguity: %s', async (_label, number, override, message) => {
-    const base = priorJob();
-    const steps = (base.steps as any[]).map((step) => step.number === number ? { ...step, ...override } : step);
-    const job = priorJob({ steps });
-    const fetchMock = recoveryActionsMock({ pages: [{ total_count: 1, jobs: [job] }], detail: job });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).rejects.toThrow(message);
-  });
-
-  it.each(['missing', 'duplicate'] as const)('blocks a %s critical upload step', async (kind) => {
-    const base = priorJob();
-    const originalSteps = base.steps as any[];
-    const steps = kind === 'missing'
-      ? originalSteps.filter((step) => step.number !== 10)
-      : [...originalSteps.slice(0, 10), { ...originalSteps[9] }, ...originalSteps.slice(10)];
-    const job = priorJob({ steps });
-    const fetchMock = recoveryActionsMock({ pages: [{ total_count: 1, jobs: [job] }], detail: job });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).rejects.toThrow(kind === 'missing' ? /step 10 is missing/i : /duplicated or reordered/i);
-  });
-
-  it('fails closed on malformed and timed-out Actions responses', async () => {
-    const malformed = recoveryActionsMock({ latest: [] });
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: malformed,
-    })).rejects.toThrow(/response is invalid/i);
-
-    const timeout = vi.fn(() => new Promise<Response>(() => {}));
-    await expect(verifySkippedUploadRecoveryEvidence({
-      uploadAttempt: scannedRolloutIssue(originalAttemptIssue()),
-      token: 'github-token',
-      fetchImpl: timeout,
-      requestTimeoutMs: 5,
-    })).rejects.toThrow(/timed out/i);
-  });
-});
-
-describe('two-stage rollout ledgers', () => {
-  it('formats canonical upload-attempt, upload-success, and submit-attempt identities and links', () => {
-    const attempt = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const success = formatRolloutLedgerMarker('uploadSuccess', {
-      ...ROLLOUT,
-      ...UPLOAD_PROOF,
-      uploadAttemptIssueNumber: 10,
-      uploadAttemptIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/10`,
-    });
-    const submit = formatRolloutLedgerMarker('submitAttempt', {
-      ...ROLLOUT,
-      runId: 789,
-      runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/789`,
-      uploadAttemptIssueNumber: 10,
-      uploadAttemptIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/10`,
-      uploadSuccessIssueNumber: 11,
-      uploadSuccessIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/11`,
-    });
-    for (const marker of [attempt, success, submit]) {
-      expect(validateRolloutLedgerMarker(marker.title, marker.body)).toEqual(marker);
-      expect(marker.payload).toMatchObject({
-        repository: EXPECTED_REPOSITORY,
-        repositoryId: EXPECTED_REPOSITORY_ID,
-        releaseTag: 'v0.3.0',
-        releaseVersion: '0.3.0',
-        releaseId: 375937330,
-        assetId: 528076253,
-        assetName: 'eipeek-0.3.0-chrome.zip',
-        assetSize: 151532,
-        sha256: '2'.repeat(64),
-        publisherId: PUBLISHER_ID,
-        extensionId: EXPECTED_EXTENSION_ID,
-        runAttempt: 1,
-        workflowRef: ROLLOUT.workflowRef,
-        workflowSha: ROLLOUT.workflowSha,
-      });
-      expect(marker.payload.releaseUrl).toMatch(/^https:\/\/github\.com\//);
-      expect(marker.payload.assetUrl).toMatch(/^https:\/\/github\.com\//);
-      expect(marker.payload.commitUrl).toMatch(/^https:\/\/github\.com\//);
-      expect(marker.payload.cwsStatusUrl).toMatch(/:fetchStatus$/);
-      expect(marker.payload.workflowUrl).toContain(ROLLOUT.workflowSha);
+    for (const jobName of ['upload', 'submit', 'publish']) {
+      const stepNames: string[] = document.jobs[jobName].steps.map((step: any) => step.name);
+      expect(stepNames.some((stepName) => /rerun|ledger|attempt|resume/i.test(stepName))).toBe(false);
     }
-    expect(success.payload).toMatchObject(UPLOAD_PROOF);
-    expect(() => formatRolloutLedgerMarker('uploadSuccess', {
-      ...ROLLOUT,
-      ...UPLOAD_PROOF,
-      uploadState: 'IN_PROGRESS',
-      uploadAttemptIssueNumber: 10,
-      uploadAttemptIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/10`,
-    })).toThrow(/must record SUCCEEDED/);
-  });
-
-  it('formats the immutable attempt -> resume -> upload-success/v2 recovery chain', () => {
-    const attempt = originalAttemptIssue();
-    const resume = recoveryResumeIssue();
-    const success = recoverySuccessIssue(11, resume);
-    const resumeMarker = validateRolloutLedgerMarker(resume.title, resume.body);
-    const successMarker = validateRolloutLedgerMarker(success.title, success.body);
-    expect(resumeMarker).toMatchObject({
-      type: 'uploadResumeAttempt',
-      payload: {
-        schema: 'eipeek-cws-upload-resume-attempt/v1',
-        operation: 'resume-upload',
-        uploadAttemptIssueNumber: attempt.number,
-        priorEvidence: expectedRecoveryEvidence(),
-      },
-    });
-    expect(successMarker).toMatchObject({
-      type: 'recoveryUploadSuccess',
-      payload: {
-        schema: 'eipeek-cws-upload-success/v2',
-        operation: 'resume-upload',
-        uploadAttemptIssueNumber: attempt.number,
-        uploadResumeIssueNumber: resume.number,
-        ...UPLOAD_PROOF,
-      },
-    });
-  });
-
-  it('derives proof from the attempt, then stably claims exactly one resume ledger', async () => {
-    const attempt = originalAttemptIssue();
-    const resume = recoveryResumeIssue();
-    const issueListUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues?state=all&sort=created&direction=asc&per_page=100&page=1`;
-    const runApiUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId}`;
-    const sequence = strictFetchSequence([
-      { url: issueListUrl, body: [attempt] },
-      { url: runApiUrl, body: priorRun() },
-      { url: `${runApiUrl}/attempts/1`, body: priorRun() },
-      { url: `${runApiUrl}/attempts/1/jobs?per_page=100&page=1`, body: {
-        total_count: 5, jobs: historicalIncidentJobs(),
-      } },
-      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/${PRIOR_JOB_ID}`, body: priorJob() },
-      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues`, body: resume, status: 201, method: 'POST' },
-      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues/${resume.number}`, body: resume },
-      { url: issueListUrl, body: [attempt] },
-      { url: issueListUrl, body: [attempt, resume] },
-      { url: issueListUrl, body: [attempt, resume] },
-    ]);
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    await expect(claimUploadResumeAttempt({
-      ...RECOVERY_ROLLOUT,
-      token: 'github-token',
-      fetchImpl: sequence.fetchMock,
-      sleep,
-      visibilityDelaysMs: [0, 19],
-      confirmationDelayMs: 29,
-    })).resolves.toMatchObject({
-      issueNumber: resume.number,
-      uploadAttemptIssueNumber: attempt.number,
-      priorEvidence: expectedRecoveryEvidence(),
-    });
-    expect(sequence.remaining).toHaveLength(0);
-    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 19, 29]);
-  });
-
-  it('rejects a resume claim when issue #9 closes between visibility and confirmation scans', async () => {
-    const attempt = originalAttemptIssue();
-    const closedAttempt = originalAttemptIssue(9, 'closed');
-    const resume = recoveryResumeIssue();
-    const issueListUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues?state=all&sort=created&direction=asc&per_page=100&page=1`;
-    const runApiUrl = 'https://api.github.com/repos/toml01/eipeek/actions/runs/32993251330';
-    const sequence = strictFetchSequence([
-      { url: issueListUrl, body: [attempt] },
-      { url: runApiUrl, body: priorRun() },
-      { url: `${runApiUrl}/attempts/1`, body: priorRun() },
-      { url: `${runApiUrl}/attempts/1/jobs?per_page=100&page=1`, body: {
-        total_count: 5, jobs: historicalIncidentJobs(),
-      } },
-      { url: 'https://api.github.com/repos/toml01/eipeek/actions/jobs/98255955971', body: priorJob() },
-      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues`, body: resume, status: 201, method: 'POST' },
-      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues/${resume.number}`, body: resume },
-      { url: issueListUrl, body: [attempt, resume] },
-      { url: issueListUrl, body: [closedAttempt, resume] },
-    ]);
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    await expect(claimUploadResumeAttempt({
-      ...RECOVERY_ROLLOUT,
-      token: 'github-token',
-      fetchImpl: sequence.fetchMock,
-      sleep,
-      visibilityDelaysMs: [0],
-      confirmationDelayMs: 29,
-    })).rejects.toThrow(/must remain open throughout recovery/i);
-    expect(sequence.remaining).toHaveLength(0);
-    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 29]);
-    expect(sequence.fetchMock.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(1);
-  });
-
-  it('records only recovery success/v2 in the same resume run and stably verifies it', async () => {
-    const attempt = originalAttemptIssue();
-    const resume = recoveryResumeIssue();
-    const success = recoverySuccessIssue(11, resume);
-    const issueListUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues?state=all&sort=created&direction=asc&per_page=100&page=1`;
-    const sequence = strictFetchSequence([
-      { url: issueListUrl, body: [attempt, resume] },
-      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues`, body: success, status: 201, method: 'POST' },
-      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues/${success.number}`, body: success },
-      { url: issueListUrl, body: [attempt, resume] },
-      { url: issueListUrl, body: [attempt, resume, success] },
-      { url: issueListUrl, body: [attempt, resume, success] },
-    ]);
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    await expect(recordRecoveryUploadSuccess({
-      ...RECOVERY_ROLLOUT,
-      ...UPLOAD_PROOF,
-      token: 'github-token',
-      fetchImpl: sequence.fetchMock,
-      sleep,
-      visibilityDelaysMs: [0, 13],
-      confirmationDelayMs: 31,
-    })).resolves.toMatchObject({
-      issueNumber: success.number,
-      uploadAttemptIssueNumber: attempt.number,
-      uploadResumeIssueNumber: resume.number,
-    });
-    expect(sequence.remaining).toHaveLength(0);
-    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 13, 31]);
-    expect(sequence.fetchMock.mock.calls.some(([url]) => String(url).includes('/actions/'))).toBe(false);
-
-    const verifyFetch = vi.fn(async (url: string) => {
-      if (url !== issueListUrl) throw new Error(`Unexpected URL ${url}`);
-      return jsonResponse([attempt, resume, success]);
-    });
-    await expect(verifyUploadLedgers({
-      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: verifyFetch,
-    })).resolves.toMatchObject({
-      uploadAttemptIssueNumber: attempt.number,
-      uploadResumeIssueNumber: resume.number,
-      uploadSuccessIssueNumber: success.number,
-      recoveryChain: true,
-    });
-  });
-
-  it('rejects recovery-success recording when issue #9 is closed before any mutation', async () => {
-    const closedAttempt = originalAttemptIssue(9, 'closed');
-    const resume = recoveryResumeIssue();
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes('/issues?state=all')) return jsonResponse([closedAttempt, resume]);
-      throw new Error(`Mutation or Actions request must not run: ${url}`);
-    });
-    await expect(recordRecoveryUploadSuccess({
-      ...RECOVERY_ROLLOUT,
-      ...UPLOAD_PROOF,
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).rejects.toThrow(/must remain open throughout recovery/i);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
-  });
-
-  it('rejects a completed recovery chain when issue #9 is closed', async () => {
-    const closedAttempt = originalAttemptIssue(9, 'closed');
-    const resume = recoveryResumeIssue();
-    const success = recoverySuccessIssue(11, resume);
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes('/issues?state=all')) return jsonResponse([closedAttempt, resume, success]);
-      throw new Error(`Unexpected request ${url}`);
-    });
-    await expect(verifyUploadLedgers({
-      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
-    })).rejects.toThrow(/must remain open throughout recovery/i);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects claimSubmitAttempt for a closed issue #9 recovery chain before mutation', async () => {
-    const closedAttempt = originalAttemptIssue(9, 'closed');
-    const resume = recoveryResumeIssue();
-    const success = recoverySuccessIssue(11, resume);
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes('/issues?state=all')) return jsonResponse([closedAttempt, resume, success]);
-      throw new Error(`Issue mutation must not run: ${url}`);
-    });
-    await expect(claimSubmitAttempt({
-      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
-    })).rejects.toThrow(/must remain open throughout recovery/i);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
-  });
-
-  it('rejects submit authorization when issue #9 closes during final stable verification', async () => {
-    const attempt = originalAttemptIssue();
-    const closedAttempt = originalAttemptIssue(9, 'closed');
-    const resume = recoveryResumeIssue();
-    const success = recoverySuccessIssue(11, resume);
-    const submit = rolloutIssue(12, formatRolloutLedgerMarker('submitAttempt', {
-      ...RECOVERY_ROLLOUT,
-      uploadAttemptIssueNumber: 9,
-      uploadAttemptIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/9`,
-      uploadSuccessIssueNumber: 11,
-      uploadSuccessIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/11`,
-    }));
-    const issueListUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues?state=all&sort=created&direction=asc&per_page=100&page=1`;
-    const sequence = strictFetchSequence([
-      { url: issueListUrl, body: [attempt, resume, success] },
-      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues`, body: submit, status: 201, method: 'POST' },
-      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues/${submit.number}`, body: submit },
-      { url: issueListUrl, body: [attempt, resume, success, submit] },
-      { url: issueListUrl, body: [closedAttempt, resume, success, submit] },
-    ]);
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    await expect(claimSubmitAttempt({
-      ...RECOVERY_ROLLOUT,
-      token: 'github-token',
-      fetchImpl: sequence.fetchMock,
-      sleep,
-      visibilityDelaysMs: [0],
-      confirmationDelayMs: 37,
-    })).rejects.toThrow(/must remain open throughout recovery/i);
-    expect(sequence.remaining).toHaveLength(0);
-    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 37]);
-  });
-
-  it('permanently blocks a second recovery after the resume claim, even without success', async () => {
-    const attempt = originalAttemptIssue();
-    const resume = recoveryResumeIssue();
-    const fetchMock = vi.fn(async (url: string) => {
-      if (!url.includes('/issues?state=all')) throw new Error(`Unexpected URL ${url}`);
-      return jsonResponse([attempt, resume]);
-    });
-    await expect(claimUploadResumeAttempt({
-      ...RECOVERY_ROLLOUT, runId: 999_999,
-      runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/999999`,
-      token: 'github-token', fetchImpl: fetchMock,
-    })).rejects.toThrow(/one-shot/i);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]![0]).not.toContain('/actions/');
-  });
-
-  it('rejects recovery success from any run other than the resume run', async () => {
-    const attempt = originalAttemptIssue();
-    const resume = recoveryResumeIssue();
-    const fetchMock = vi.fn(async (url: string) => {
-      if (!url.includes('/issues?state=all')) throw new Error(`Unexpected URL ${url}`);
-      return jsonResponse([attempt, resume]);
-    });
-    await expect(recordRecoveryUploadSuccess({
-      ...RECOVERY_ROLLOUT,
-      runId: RECOVERY_ROLLOUT.runId + 1,
-      runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/${RECOVERY_ROLLOUT.runId + 1}`,
-      ...UPLOAD_PROOF,
-      token: 'github-token',
-      fetchImpl: fetchMock,
-    })).rejects.toThrow(/run identity.*runId/i);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    'resume without attempt',
-    'success/v1 with resume',
-    'success/v2 without resume',
-    'success/v2 wrong resume link',
-    'success/v2 wrong run',
-    'both success versions',
-    'resume evidence mismatch',
-  ] as const)('rejects invalid recovery chain: %s', async (kind) => {
-    const attempt = originalAttemptIssue();
-    const resume = recoveryResumeIssue();
-    const v1 = rolloutIssue(20, formatRolloutLedgerMarker('uploadSuccess', {
-      ...ORIGINAL_ROLLOUT,
-      ...UPLOAD_PROOF,
-      uploadAttemptIssueNumber: attempt.number,
-      uploadAttemptIssueUrl: attempt.html_url,
-    }));
-    const v2 = recoverySuccessIssue(21, resume);
-    const wrongLink = rolloutIssue(21, formatRolloutLedgerMarker('recoveryUploadSuccess', {
-      ...RECOVERY_ROLLOUT,
-      ...UPLOAD_PROOF,
-      uploadAttemptIssueNumber: 9,
-      uploadAttemptIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/9`,
-      uploadResumeIssueNumber: 99,
-      uploadResumeIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/99`,
-    }));
-    const wrongRun = rolloutIssue(21, formatRolloutLedgerMarker('recoveryUploadSuccess', {
-      ...RECOVERY_ROLLOUT,
-      runId: RECOVERY_ROLLOUT.runId + 1,
-      runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/${RECOVERY_ROLLOUT.runId + 1}`,
-      ...UPLOAD_PROOF,
-      uploadAttemptIssueNumber: attempt.number,
-      uploadAttemptIssueUrl: attempt.html_url,
-      uploadResumeIssueNumber: resume.number,
-      uploadResumeIssueUrl: resume.html_url,
-    }));
-    const mismatchedAttempt = rolloutIssue(9, formatRolloutLedgerMarker('uploadAttempt', {
-      ...ORIGINAL_ROLLOUT,
-      runId: ORIGINAL_ROLLOUT.runId + 1,
-      runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/${ORIGINAL_ROLLOUT.runId + 1}`,
-    }));
-    const issues = kind === 'resume without attempt' ? [resume]
-      : kind === 'success/v1 with resume' ? [attempt, resume, v1]
-        : kind === 'success/v2 without resume' ? [attempt, v2]
-          : kind === 'success/v2 wrong resume link' ? [attempt, resume, wrongLink]
-            : kind === 'success/v2 wrong run' ? [attempt, resume, wrongRun]
-              : kind === 'both success versions' ? [attempt, resume, v1, v2]
-                : [mismatchedAttempt, resume];
-    const fetchMock = vi.fn(async (url: string) => {
-      if (!url.includes('/issues?state=all')) throw new Error(`Unexpected URL ${url}`);
-      return jsonResponse(issues);
-    });
-    await expect(verifyUploadLedgers({
-      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
-    })).rejects.toThrow();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('creates and re-fetches an exact upload attempt and forbids every later retry', async () => {
-    const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const created = rolloutIssue(10, marker);
-    const createFetch = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(created))
-      .mockResolvedValueOnce(jsonResponse([created]))
-      .mockResolvedValueOnce(jsonResponse([created]));
-    await expect(claimUploadAttempt({
-      ...ROLLOUT, token: 'github-token', fetchImpl: createFetch, ...noLedgerWait(),
-    }))
-      .resolves.toMatchObject({ issueNumber: 10, issueUrl: created.html_url });
-    expect(createFetch).toHaveBeenCalledTimes(5);
-    expect(createFetch.mock.calls.every(([url]) => String(url).includes('/issues'))).toBe(true);
-    expect(createFetch.mock.calls.some(([url]) => String(url).includes('/actions/'))).toBe(false);
-    expectOnlyGitHubRequests(createFetch);
-
-    for (const state of ['open', 'closed']) {
-      const retryFetch = vi.fn().mockResolvedValueOnce(jsonResponse([rolloutIssue(10, marker, state)]));
-      await expect(claimUploadAttempt({ ...ROLLOUT, token: 'github-token', fetchImpl: retryFetch }))
-        .rejects.toThrow(/automated upload retry is forbidden/);
-      expect(retryFetch).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  it.each(['upload attempt', 'upload success', 'submit attempt'] as const)(
-    'waits for delayed %s visibility and then requires a second stable full scan',
-    async (kind) => {
-      const attempt = rolloutIssue(10, formatRolloutLedgerMarker('uploadAttempt', ROLLOUT));
-      const success = rolloutIssue(11, formatRolloutLedgerMarker('uploadSuccess', {
-        ...ROLLOUT,
-        ...UPLOAD_PROOF,
-        uploadAttemptIssueNumber: 10,
-        uploadAttemptIssueUrl: attempt.html_url,
-      }));
-      const submit = rolloutIssue(12, formatRolloutLedgerMarker('submitAttempt', {
-        ...ROLLOUT,
-        uploadAttemptIssueNumber: 10,
-        uploadAttemptIssueUrl: attempt.html_url,
-        uploadSuccessIssueNumber: 11,
-        uploadSuccessIssueUrl: success.html_url,
-      }));
-      const fixture = kind === 'upload attempt'
-        ? { before: [], created: attempt, after: [attempt] }
-        : kind === 'upload success'
-          ? { before: [attempt], created: success, after: [attempt, success] }
-          : { before: [attempt, success], created: submit, after: [attempt, success, submit] };
-      const fetchMock = vi.fn()
-        .mockResolvedValueOnce(jsonResponse(fixture.before))
-        .mockResolvedValueOnce(jsonResponse(fixture.created, 201))
-        .mockResolvedValueOnce(jsonResponse(fixture.created))
-        .mockResolvedValueOnce(jsonResponse(fixture.before))
-        .mockResolvedValueOnce(jsonResponse(fixture.after))
-        .mockResolvedValueOnce(jsonResponse(fixture.after));
-      const sleep = vi.fn().mockResolvedValue(undefined);
-      const polling = { sleep, visibilityDelaysMs: [0, 17], confirmationDelayMs: 23 };
-      const operation = kind === 'upload attempt'
-        ? claimUploadAttempt({ ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock, ...polling })
-        : kind === 'upload success'
-          ? recordUploadSuccess({
-            ...ROLLOUT, ...UPLOAD_PROOF, token: 'github-token', fetchImpl: fetchMock, ...polling,
-          })
-          : claimSubmitAttempt({ ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock, ...polling });
-      await expect(operation).resolves.toMatchObject({ issueNumber: fixture.created.number });
-      expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 17, 23]);
-      expect(fetchMock).toHaveBeenCalledTimes(6);
-      expect(fetchMock.mock.calls.slice(3).every(([url]) => String(url).includes('/issues?state=all'))).toBe(true);
-      expectOnlyGitHubRequests(fetchMock);
-    },
-  );
-
-  it('fails closed when a directly verified staged ledger never appears in bounded list scans', async () => {
-    const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const created = rolloutIssue(10, marker);
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(created))
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse([]));
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    await expect(claimUploadAttempt({
-      ...ROLLOUT,
-      token: 'github-token',
-      fetchImpl: fetchMock,
-      sleep,
-      visibilityDelaysMs: [0, 5],
-      confirmationDelayMs: 7,
-    })).rejects.toThrow(/never became visible/i);
-    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 5]);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-  });
-
-  it('keeps polling after transient visibility until two consecutive full scans agree', async () => {
-    const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const created = rolloutIssue(10, marker);
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(created))
-      .mockResolvedValueOnce(jsonResponse([created]))
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse([created]))
-      .mockResolvedValueOnce(jsonResponse([created]));
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    await expect(claimUploadAttempt({
-      ...ROLLOUT,
-      token: 'github-token',
-      fetchImpl: fetchMock,
-      sleep,
-      visibilityDelaysMs: [0, 7],
-      confirmationDelayMs: 11,
-    })).resolves.toMatchObject({ issueNumber: created.number });
-    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 11, 7, 11]);
-  });
-
-  it('does not treat a direct GET mismatch as repository-list visibility', async () => {
-    const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const created = rolloutIssue(10, marker);
-    const mismatch = { ...created, body: `${created.body}changed` };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(mismatch));
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    await expect(claimUploadAttempt({
-      ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock, sleep,
-    })).rejects.toThrow(/verified uploadAttempt ledger issue marker does not match/i);
-    expect(sleep).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-
-  it.each(['duplicate', 'malformed'] as const)(
-    'fails immediately when a %s staged ledger emerges during visibility polling',
-    async (kind) => {
-      const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-      const created = rolloutIssue(10, marker);
-      const conflict = kind === 'duplicate'
-        ? rolloutIssue(11, marker)
-        : { ...rolloutIssue(11, marker), title: 'Other title' };
-      const fetchMock = vi.fn()
-        .mockResolvedValueOnce(jsonResponse([]))
-        .mockResolvedValueOnce(jsonResponse(created, 201))
-        .mockResolvedValueOnce(jsonResponse(created))
-        .mockResolvedValueOnce(jsonResponse([created, conflict]));
-      const sleep = vi.fn().mockResolvedValue(undefined);
-      await expect(claimUploadAttempt({
-        ...ROLLOUT,
-        token: 'github-token',
-        fetchImpl: fetchMock,
-        sleep,
-        visibilityDelaysMs: [0, 1],
-      })).rejects.toThrow(kind === 'duplicate' ? /duplicate/i : /canonical title/i);
-      expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0]);
-      expect(fetchMock).toHaveBeenCalledTimes(4);
-    },
-  );
-
-  it('fully paginates both visibility and confirmation scans', async () => {
-    const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const created = rolloutIssue(1001, marker);
-    const fullPage = Array.from({ length: 100 }, (_, index) => ({
-      number: index + 1,
-      title: `Unrelated issue ${index + 1}`,
-    }));
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(fullPage))
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(created))
-      .mockResolvedValueOnce(jsonResponse(fullPage))
-      .mockResolvedValueOnce(jsonResponse([created]))
-      .mockResolvedValueOnce(jsonResponse(fullPage))
-      .mockResolvedValueOnce(jsonResponse([created]));
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    await expect(claimUploadAttempt({
-      ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock, sleep,
-    })).resolves.toMatchObject({ issueNumber: 1001 });
-    const listUrls = fetchMock.mock.calls
-      .map(([url]) => String(url))
-      .filter((url) => url.includes('/issues?state=all'));
-    expect(listUrls).toHaveLength(6);
-    expect(listUrls.filter((url) => url.includes('page=2'))).toHaveLength(3);
-    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 1_000]);
-  });
-
-  it('fails closed on malformed, duplicate, and mismatched staged records', async () => {
-    const attempt = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const malformed = { ...rolloutIssue(1, attempt), body: `${attempt.body}changed` };
-    const mismatchMarker = formatRolloutLedgerMarker('uploadAttempt', { ...ROLLOUT, assetSize: 151533 });
-    for (const [issues, message] of [
-      [[malformed], /malformed or mismatched/i],
-      [[rolloutIssue(1, attempt), rolloutIssue(2, attempt)], /duplicate/i],
-      [[rolloutIssue(1, mismatchMarker)], /does not match/i],
-      [[{ ...rolloutIssue(1, attempt), title: 'Other title' }], /canonical title/i],
-      [[{ ...rolloutIssue(1, attempt), user: { login: 'attacker', id: 1, type: 'User' } }], /authenticated GitHub Actions bot/i],
-    ] as const) {
-      const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(issues));
-      await expect(verifyUploadLedgers({ ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock }))
-        .rejects.toThrow(message);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      expectOnlyGitHubRequests(fetchMock);
-    }
-  });
-
-  it('re-scans after creation and catches a raced duplicate before returning authorization', async () => {
-    const marker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const created = rolloutIssue(10, marker);
-    const raced = rolloutIssue(11, marker);
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(created))
-      .mockResolvedValueOnce(jsonResponse([created, raced]));
-    await expect(claimUploadAttempt({
-      ...ROLLOUT, token: 'github-token', fetchImpl: fetchMock, ...noLedgerWait(),
-    }))
-      .rejects.toThrow(/duplicate/i);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-  });
-
-  it('records success only after one attempt, verifies the exact link, then claims one submit attempt', async () => {
-    const attemptMarker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const attempt = rolloutIssue(10, attemptMarker);
-    const successMarker = formatRolloutLedgerMarker('uploadSuccess', {
-      ...ROLLOUT,
-      ...UPLOAD_PROOF,
-      uploadAttemptIssueNumber: 10,
-      uploadAttemptIssueUrl: attempt.html_url,
-    });
-    const success = rolloutIssue(11, successMarker);
-    const successFetch = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([attempt]))
-      .mockResolvedValueOnce(jsonResponse(success, 201))
-      .mockResolvedValueOnce(jsonResponse(success))
-      .mockResolvedValueOnce(jsonResponse([attempt, success]))
-      .mockResolvedValueOnce(jsonResponse([attempt, success]));
-    await expect(recordUploadSuccess({
-      ...ROLLOUT, ...UPLOAD_PROOF, token: 'github-token', fetchImpl: successFetch, ...noLedgerWait(),
-    }))
-      .resolves.toMatchObject({ issueNumber: 11, uploadAttemptIssueNumber: 10 });
-    expectOnlyGitHubRequests(successFetch);
-
-    const closedAttempt = { ...attempt, state: 'closed' };
-    const verifyFetch = vi.fn().mockResolvedValueOnce(jsonResponse([closedAttempt, success]));
-    await expect(verifyUploadLedgers({ ...ROLLOUT, token: 'github-token', fetchImpl: verifyFetch }))
-      .resolves.toMatchObject({
-        uploadAttemptIssueNumber: 10,
-        uploadSuccessIssueNumber: 11,
-        submitAttemptExists: false,
-      });
-
-    const submitMarker = formatRolloutLedgerMarker('submitAttempt', {
-      ...ROLLOUT,
-      uploadAttemptIssueNumber: 10,
-      uploadAttemptIssueUrl: attempt.html_url,
-      uploadSuccessIssueNumber: 11,
-      uploadSuccessIssueUrl: success.html_url,
-    });
-    const submit = rolloutIssue(12, submitMarker);
-    const submitFetch = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([closedAttempt, success]))
-      .mockResolvedValueOnce(jsonResponse(submit, 201))
-      .mockResolvedValueOnce(jsonResponse(submit))
-      .mockResolvedValueOnce(jsonResponse([closedAttempt, success, submit]))
-      .mockResolvedValueOnce(jsonResponse([closedAttempt, success, submit]));
-    await expect(claimSubmitAttempt({
-      ...ROLLOUT, token: 'github-token', fetchImpl: submitFetch, ...noLedgerWait(),
-    }))
-      .resolves.toMatchObject({ issueNumber: 12 });
-    expectOnlyGitHubRequests(submitFetch);
-  });
-
-  it('requires exactly one linked success and rejects altered or duplicate linkage', async () => {
-    const attemptMarker = formatRolloutLedgerMarker('uploadAttempt', ROLLOUT);
-    const attempt = rolloutIssue(10, attemptMarker);
-    const missingFetch = vi.fn().mockResolvedValueOnce(jsonResponse([attempt]));
-    await expect(verifyUploadLedgers({ ...ROLLOUT, token: 'github-token', fetchImpl: missingFetch }))
-      .rejects.toThrow(/exactly one canonical linked upload success/i);
-
-    const successMarker = formatRolloutLedgerMarker('uploadSuccess', {
-      ...ROLLOUT,
-      ...UPLOAD_PROOF,
-      uploadAttemptIssueNumber: 9,
-      uploadAttemptIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/9`,
-    });
-    const badLinkFetch = vi.fn().mockResolvedValueOnce(jsonResponse([attempt, rolloutIssue(11, successMarker)]));
-    await expect(verifyUploadLedgers({ ...ROLLOUT, token: 'github-token', fetchImpl: badLinkFetch }))
-      .rejects.toThrow(/does not link the exact upload attempt/i);
   });
 });
 
@@ -1884,30 +482,50 @@ describe('fail-closed publish decisions', () => {
   });
 });
 
-describe('fail-closed staged submission decisions', () => {
-  const verified = { uploadLedgersVerified: true };
-
-  it('allows a lower published version with no submitted revision only after exact upload ledgers', () => {
-    expect(decideSubmitAction(status(), '0.3.0', verified)).toEqual({
-      action: 'submit', reason: 'verified-synchronous-upload', version: '0.3.0',
+describe('fail-closed upload decisions', () => {
+  it('shares the same fail-closed checks as the combined publish decision', () => {
+    expect(() => decideUploadAction(status({ warned: true }), '0.3.0')).toThrow(/warning/);
+    expect(() => decideUploadAction(status({ takenDown: true }), '0.3.0')).toThrow(/taken down/);
+    expect(() => decideUploadAction(status(), '0.2.0')).toThrow(/downgrade/);
+    expect(decideUploadAction(status({
+      submittedItemRevisionStatus: revision('PENDING_REVIEW', '0.3.0'),
+    }), '0.3.0')).toMatchObject({ action: 'noop', reason: 'pending_review' });
+    expect(decideUploadAction(status({
+      publishedItemRevisionStatus: revision('PUBLISHED', '0.3.0'),
+    }), '0.3.0')).toMatchObject({ action: 'noop', reason: 'already-published' });
+    expect(decideUploadAction(status(), '0.3.0')).toEqual({
+      action: 'upload', reason: 'new-version', version: '0.3.0',
     });
-    expect(decideSubmitAction(status({ lastAsyncUploadState: 'SUCCEEDED' }), '0.3.0', verified))
-      .toMatchObject({ action: 'submit' });
-    expect(decideSubmitAction(status({ lastAsyncUploadState: undefined }), '0.3.0', verified))
-      .toMatchObject({ action: 'submit' });
-    expect(() => decideSubmitAction(status(), '0.3.0')).toThrow(/ledgers/i);
   });
 
-  it('uses exact pending/published read-only no-ops, including after an attempt issue exists', () => {
+  it('treats an already-uploaded, not-yet-submitted draft as a safe noop, unlike the combined decision', () => {
+    expect(decideUploadAction(status({ lastAsyncUploadState: 'SUCCEEDED' }), '0.3.0')).toEqual({
+      action: 'noop', reason: 'already-uploaded', version: '0.3.0',
+    });
+    // The same live status is ambiguous for the combined upload+publish decision,
+    // which has no decoupled submit step to fall back on.
+    expect(() => decidePublishAction(status({ lastAsyncUploadState: 'SUCCEEDED' }), '0.3.0')).toThrow(/ambiguous/);
+  });
+});
+
+describe('fail-closed staged submission decisions', () => {
+  it('allows a lower published version with no submitted revision to be submitted', () => {
+    expect(decideSubmitAction(status(), '0.3.0')).toEqual({
+      action: 'submit', reason: 'ready-to-submit', version: '0.3.0',
+    });
+    expect(decideSubmitAction(status({ lastAsyncUploadState: 'SUCCEEDED' }), '0.3.0'))
+      .toMatchObject({ action: 'submit' });
+    expect(decideSubmitAction(status({ lastAsyncUploadState: undefined }), '0.3.0'))
+      .toMatchObject({ action: 'submit' });
+  });
+
+  it('uses exact pending/published read-only no-ops', () => {
     expect(decideSubmitAction(status({
       submittedItemRevisionStatus: revision('PENDING_REVIEW', '0.3.0'),
-    }), '0.3.0', { ...verified, submitAttemptExists: true })).toMatchObject({ action: 'noop' });
+    }), '0.3.0')).toMatchObject({ action: 'noop' });
     expect(decideSubmitAction(status({
       publishedItemRevisionStatus: revision('PUBLISHED', '0.3.0'),
-    }), '0.3.0', { ...verified, submitAttemptExists: true })).toMatchObject({ action: 'noop' });
-    expect(() => decideSubmitAction(status(), '0.3.0', {
-      ...verified, submitAttemptExists: true,
-    })).toThrow(/attempt ledger exists without an exact pending or published/i);
+    }), '0.3.0')).toMatchObject({ action: 'noop' });
   });
 
   it('rejects every dangerous or conflicting state', () => {
@@ -1922,7 +540,7 @@ describe('fail-closed staged submission decisions', () => {
       status({ submittedItemRevisionStatus: revision('CANCELLED', '0.3.0') }),
       status({ submittedItemRevisionStatus: revision('PENDING_REVIEW', '0.4.0') }),
       status({ publishedItemRevisionStatus: revision('PUBLISHED', '0.4.0') }),
-    ]) expect(() => decideSubmitAction(candidate, '0.3.0', verified)).toThrow();
+    ]) expect(() => decideSubmitAction(candidate, '0.3.0')).toThrow();
   });
 });
 
@@ -1973,9 +591,9 @@ describe('direct API operations', () => {
   });
 
   it('plans upload and submit through read-only fetchStatus only', async () => {
-    for (const [planner, options, action] of [
-      [planStoreUpload, {}, 'upload'],
-      [planStoreSubmit, { uploadLedgersVerified: true, submitAttemptExists: false }, 'submit'],
+    for (const [planner, action] of [
+      [planStoreUpload, 'upload'],
+      [planStoreSubmit, 'submit'],
     ] as const) {
       const fetchMock = vi.fn(async (url: string) => {
         if (url !== statusUrl) throw new Error(`Unexpected URL ${url}`);
@@ -1988,10 +606,70 @@ describe('direct API operations', () => {
         version: '0.3.0',
         fetchImpl: fetchMock,
         deriveId: deriveExpectedId,
-        ...options,
       })).resolves.toMatchObject({ decision: { action } });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it('makes plan-upload and plan-submit safe to call more than once from live status alone', async () => {
+    // First call: nothing uploaded yet, so plan-upload says upload.
+    const freshFetch = vi.fn().mockResolvedValue(jsonResponse(status()));
+    await expect(planStoreUpload({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      version: '0.3.0',
+      fetchImpl: freshFetch,
+      deriveId: deriveExpectedId,
+    })).resolves.toMatchObject({ decision: { action: 'upload' } });
+
+    // Rerunning plan-upload once the store already reflects an uploaded,
+    // unsubmitted draft is a safe noop -- no ledger needed to know this.
+    const afterUploadFetch = vi.fn(async () => jsonResponse(status({ lastAsyncUploadState: 'SUCCEEDED' })));
+    await expect(planStoreUpload({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      version: '0.3.0',
+      fetchImpl: afterUploadFetch,
+      deriveId: deriveExpectedId,
+    })).resolves.toMatchObject({ decision: { action: 'noop', reason: 'already-uploaded' } });
+
+    // plan-submit says submit while nothing has been submitted yet.
+    await expect(planStoreSubmit({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      version: '0.3.0',
+      fetchImpl: afterUploadFetch,
+      deriveId: deriveExpectedId,
+    })).resolves.toMatchObject({ decision: { action: 'submit' } });
+
+    // Rerunning plan-submit once the store already reflects the exact
+    // submitted (or published) target version is a safe noop.
+    const afterSubmitFetch = vi.fn().mockResolvedValue(jsonResponse(status({
+      submittedItemRevisionStatus: revision('PENDING_REVIEW', '0.3.0'),
+    })));
+    await expect(planStoreSubmit({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      version: '0.3.0',
+      fetchImpl: afterSubmitFetch,
+      deriveId: deriveExpectedId,
+    })).resolves.toMatchObject({ decision: { action: 'noop', reason: 'pending_review' } });
+
+    const afterPublishFetch = vi.fn().mockResolvedValue(jsonResponse(status({
+      publishedItemRevisionStatus: revision('PUBLISHED', '0.3.0'),
+    })));
+    await expect(planStoreSubmit({
+      publisherId: PUBLISHER_ID,
+      extensionId: EXPECTED_EXTENSION_ID,
+      accessToken: 'test-token',
+      version: '0.3.0',
+      fetchImpl: afterPublishFetch,
+      deriveId: deriveExpectedId,
+    })).resolves.toMatchObject({ decision: { action: 'noop', reason: 'already-published' } });
   });
 
   it('uploads a draft from a direct synchronous proof and never calls publish', async () => {
@@ -2062,7 +740,6 @@ describe('direct API operations', () => {
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       version: '0.3.0',
-      uploadLedgersVerified: true,
       fetchImpl: fetchMock,
       deriveId: deriveExpectedId,
     })).resolves.toMatchObject({ mutated: true, decision: { action: 'submitted' } });
@@ -2075,7 +752,6 @@ describe('direct API operations', () => {
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       version: '0.3.0',
-      uploadLedgersVerified: true,
       artifact: '/tmp/release.zip',
       fetchImpl: noNetwork,
     })).rejects.toThrow(/does not accept an artifact/i);
@@ -2092,7 +768,6 @@ describe('direct API operations', () => {
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       version: '0.3.0',
-      uploadLedgersVerified: true,
       fetchImpl: fetchMock,
       deriveId: deriveExpectedId,
     })).resolves.toMatchObject({ mutated: false, decision: { action: 'noop' } });
@@ -2121,7 +796,6 @@ describe('direct API operations', () => {
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       version: '0.3.0',
-      uploadLedgersVerified: true,
       fetchImpl: fetchMock,
       deriveId: deriveExpectedId,
     })).rejects.toThrow(/outcome is unknown/i);
@@ -2139,7 +813,6 @@ describe('direct API operations', () => {
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       version: '0.3.0',
-      uploadLedgersVerified: true,
       fetchImpl: aborted,
       deriveId: deriveExpectedId,
     })).rejects.toThrow(/outcome is unknown.*aborted/i);
@@ -2154,7 +827,6 @@ describe('direct API operations', () => {
       extensionId: EXPECTED_EXTENSION_ID,
       accessToken: 'test-token',
       version: '0.3.0',
-      uploadLedgersVerified: true,
       fetchImpl: timedOut,
       deriveId: deriveExpectedId,
       requestTimeoutMs: 5,
