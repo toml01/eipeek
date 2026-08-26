@@ -331,6 +331,25 @@ describe('publishing workflow guards', () => {
     expect(document.jobs.submit.if).toContain("inputs.release_tag == 'v0.3.0'");
     expect(document.jobs.upload.if).toContain("inputs.operation == 'upload'");
     expect(document.jobs.submit.if).toContain("inputs.operation == 'submit'");
+    for (const job of ['upload', 'submit', 'publish']) {
+      expect(document.jobs[job].needs).toBe('validate');
+    }
+    const validateRelease = document.jobs.validate.steps.find((step: any) =>
+      step.name === 'Validate exact GitHub release and package');
+    expect(validateRelease.env.OPERATION).toBe("${{ github.event_name == 'release' && 'publish' || inputs.operation }}");
+    expect(validateRelease.env.CONFIRMATION).toBe('${{ inputs.confirmation }}');
+    expect(validateRelease.run).toContain('--operation "${OPERATION}"');
+    expect(validateRelease.run).toContain('args+=(--confirmation "${CONFIRMATION}")');
+    const uploadRerunGuard = document.jobs.upload.steps.find((step: any) =>
+      step.name === 'Refuse an in-place upload rerun before mutation');
+    const submitRerunGuard = document.jobs.submit.steps.find((step: any) =>
+      step.name === 'Refuse an in-place submit rerun before mutation');
+    expect(uploadRerunGuard.if).toBe("steps.plan.outputs.action == 'upload' && github.run_attempt != 1");
+    expect(submitRerunGuard.if).toBe("steps.plan.outputs.action == 'submit' && github.run_attempt != 1");
+    const submitPlan = document.jobs.submit.steps.find((step: any) =>
+      step.name === 'Plan review submission from current store status without mutation');
+    expect(submitPlan.env.SUBMIT_ATTEMPT_EXISTS).toBe('${{ steps.upload-ledgers.outputs.submit_attempt_exists }}');
+    expect(submitPlan.run).toContain('--submit-attempt-exists "${SUBMIT_ATTEMPT_EXISTS:-false}"');
     expect(document.jobs.publish.if).toContain("github.event.release.tag_name != 'v0.3.0'");
     expect(document.jobs.publish.if).not.toContain('workflow_dispatch');
     expect(workflow.slice(workflow.indexOf('  upload:'), workflow.indexOf('  submit:'))).not.toContain(':publish');
