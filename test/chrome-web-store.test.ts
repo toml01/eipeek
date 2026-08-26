@@ -237,8 +237,8 @@ function historicalIncidentJobs() {
     otherPriorJob(98255839457, 'Validate immutable release inputs'),
     priorJob(),
     otherPriorJob(98255957499, 'Read Chrome Web Store status', { conclusion: 'skipped' }),
-    otherPriorJob(98255957552, 'Protected v0.3.0 review submission', { conclusion: 'skipped' }),
-    otherPriorJob(98255957972, 'Protected future release upload and publish', { conclusion: 'skipped' }),
+    otherPriorJob(98255957552, 'Protected future release upload and publish', { conclusion: 'skipped' }),
+    otherPriorJob(98255957972, 'Protected v0.3.0 review submission', { conclusion: 'skipped' }),
   ];
 }
 
