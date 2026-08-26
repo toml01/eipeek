@@ -19,13 +19,19 @@ service-account key, or generic publishing action.
 
 **Nothing has been uploaded or submitted by this automation.** Release `v0.3.0`
 predates the workflow, so it can run only through a deliberate manual dispatch.
-Do not select `publish` until the upload and automatic-after-review release have
-been explicitly approved.
+Its rollout has two separate protected dispatches: first upload the draft, then
+pause while the Dashboard-only `alarms` permission justification is saved, and
+only after explicit second approval submit that draft for review.
 
 Chrome Dashboard service-account association is complete. A direct read-only
 service-account `fetchStatus` check is also complete: it reported published version
 `0.2.1`, no pending submission, no warning or takedown, and no recent upload. The
 GitHub Actions WIF status preflight remains unrun until this workflow is merged.
+`fetchStatus` does not expose or cryptographically identify unsubmitted draft
+bytes. An absent `lastAsyncUploadState` is therefore not proof that no draft
+exists. The exact upload-attempt and synchronous-success issues, the Dashboard
+inspection, the second typed confirmation, and the second environment approval
+are all required before submission.
 
 The workflow pins all facts above because this legacy release is mutable. For
 future versions, enable [GitHub immutable releases][github-immutable] before
@@ -182,15 +188,16 @@ All four **environment variables** are configured; they are not secrets:
 
 There are no GitHub secrets. The workflow requests a short-lived access token only
 after the environment gate. Read-only status uses the
-`chromewebstore.readonly` scope; publishing uses `chromewebstore`. The publish job
-alone also receives `issues: write` for its durable public attempt ledger. The
-status job has only `contents: read` and `id-token: write`.
+`chromewebstore.readonly` scope; upload, submission, and future combined publishing
+use `chromewebstore`. Only mutation jobs receive `issues: write` for their durable
+public ledgers. The status job has only `contents: read` and `id-token: write`.
 
 ## 3. Preflight and release `v0.3.0`
 
 From **Actions → Chrome Web Store → Run workflow**, use the `main` branch. Manual
-`status` and `publish` jobs enforce `refs/heads/main`; manual `validate` may run from
-another ref because it receives no Google credentials and cannot mutate Chrome.
+`status`, `upload`, and `submit` jobs enforce `refs/heads/main`; manual `validate`
+may run from another ref because it receives no Google credentials and cannot
+mutate Chrome.
 
 1. GitHub Actions WIF read-only preflight (not yet run; wait until the workflow is
    merged): set tag `v0.3.0`, operation `status`, and leave confirmation empty.
@@ -205,37 +212,71 @@ another ref because it receives no Google credentials and cannot mutate Chrome.
    fields. It checks out the resolved release commit without persisted credentials,
    installs and builds it under Node 22 without CWS or Google credentials, and
    requires the normalized ZIP file tree and every file byte to equal that build.
-3. **Stop here until explicit approval to publish has been given.**
-4. Later, set tag `v0.3.0`, operation `publish`, and confirmation exactly
-   `publish v0.3.0`. Then approve the `chrome-web-store` environment wait.
+3. **Stop here until explicit approval to upload the draft has been given.** Run
+   the first stage with exactly:
 
-Approval performs the single public-release gate. After approval, the job downloads
-the validated asset again by asset ID, rechecks all identities and SHA-256, checks
-store state, and records a read-only upload/no-op plan. For an upload plan it must
-list every repository issue in both open and closed states and find no canonical
-ledger for the exact SHA-256. It then creates one public audit issue containing the
-release tag and version, release and asset IDs, commit, SHA-256, and GitHub run URL,
-verifies the successful creation response, and fetches that exact issue again.
-Every attempted release that reaches this pre-mutation point therefore has one
-public audit issue. Any list, create, or verification failure stops before Chrome
-mutation. Only then does the helper check store status again immediately before
-uploading once and submitting once with:
+   ```sh
+   gh workflow run chrome-web-store.yml --ref main \
+     -f release_tag=v0.3.0 \
+     -f operation=upload \
+     -f confirmation='upload draft v0.3.0 only'
+   ```
+
+   Approve this run's `chrome-web-store` environment wait. The confirmation is
+   case-sensitive and whitespace-sensitive.
+4. After approval, the upload job downloads the artifact again, revalidates every
+   approved release identity and byte digest, and rechecks CWS state. Before any
+   upload it scans open and closed issues, creates one canonical upload-attempt
+   issue with exact repository, release, asset, tag object, commit, SHA-256,
+   version, CWS target, run, workflow identity, and canonical links, verifies the
+   creation response, and fetches the exact issue again. It then calls only API v2
+   media upload. It never calls publish. A canonical upload-success issue is
+   created and linked to the attempt only when the direct upload response has the
+   exact item identity, `uploadState: SUCCEEDED`, and `crxVersion: 0.3.0`.
+   Asynchronous, malformed, mismatched, timed-out, aborted, or otherwise ambiguous
+   responses leave only the attempt issue and fail closed.
+5. In the Chrome Web Store Developer Dashboard, open the visible `0.3.0` draft.
+   Compare the **detailed description** and confirm it is unchanged. Save **only**
+   the new `alarms` permission justification; do not change listing metadata,
+   release assets, distribution, or any other field. Obtain explicit second
+   approval to submit after that saved Dashboard state has been reviewed.
+6. Run the second stage with exactly:
+
+   ```sh
+   gh workflow run chrome-web-store.yml --ref main \
+     -f release_tag=v0.3.0 \
+     -f operation=submit \
+     -f confirmation='submit v0.3.0 after saving alarms justification'
+   ```
+
+   Approve this separate run's `chrome-web-store` environment wait. The typed
+   confirmation and this second approval are the human attestation that Dashboard
+   draft `0.3.0` was visible, its detailed description remained unchanged, and the
+   `alarms` justification was saved.
+
+The submit run performs release and tagged-source provenance validation again,
+then revalidates the release asset after approval. It scans open and closed issues
+and requires exactly one canonical upload-attempt issue and exactly one canonical,
+linked synchronous upload-success issue. Malformed, duplicate, mismatched, or
+incorrectly linked records stop the run. It then rechecks store state, creates and
+re-fetches a canonical submit-attempt issue, rechecks state immediately before
+mutation, and calls only API v2 publish with:
 
 ```json
 {"publishType":"DEFAULT_PUBLISH","skipReview":false,"blockOnWarnings":true}
 ```
 
 That submission goes to Chrome review and **automatically becomes public when
-Chrome approves it**. There is no second manual gate. The workflow never cancels a
-submission and never blindly retries an uncertain upload or publish POST. If the
-exact version is already pending or published, it records a no-op instead.
+Chrome approves it**. The workflow never cancels a submission and never blindly
+retries an uncertain upload or publish POST. If exact `0.3.0` is already pending or
+published, submission is a read-only no-op after upload-ledger verification.
 
-Manual `publish` dispatch is restricted to the pinned legacy release `v0.3.0`, with
-confirmation exactly `publish v0.3.0`, and runs only from `main`. A
-`release.published` event for `v0.3.0` is excluded from the publish job and rejected
-during validation. Later releases publish only from their `release.published`
-event. Manual `validate` and main-only `status` continue to support later release
-tags.
+Manual combined publishing is unavailable. Manual `upload` and `submit` are each
+restricted to pinned legacy release `v0.3.0`, their exact confirmation above, and
+`main`. A `release.published` event for `v0.3.0` is excluded from the future publish
+job and rejected during validation. Later releases retain the combined protected
+upload-and-submit path only from their `release.published` event. Manual `validate`
+and main-only `status` continue to support later release tags.
 
 For later versions, publishing a non-draft, non-prerelease GitHub release triggers
 the same validation and queues the protected publish job automatically. Keep
@@ -246,19 +287,27 @@ release immutability enabled; prepare all assets before publishing the draft.
 - Every error after an upload or publish request may have been sent is an unknown
   outcome. This includes a timeout or abort, network exception, non-2xx response,
   non-JSON success, or response identity/schema/version mismatch. Do not rerun
-  `publish`. Run read-only `status` and inspect the Developer Dashboard. An exact
-  pending or published version is an audited no-op; any other state requires manual
-  resolution.
-- A matching attempt-ledger issue always blocks automatic retry whether the issue
-  is open or closed. The issue is repository-wide, does not expire, and is not
+  the failed stage. Run read-only `status` and inspect the Developer Dashboard. An
+  exact pending or published version is an audited no-op; any other state requires
+  manual resolution.
+- A matching upload-attempt or submit-attempt issue always blocks automatic retry
+  unless exact pending/published state makes submission a read-only no-op. The
+  legacy combined-path attempt ledger has the same fail-closed retry behavior.
+  Each issue blocks whether it is open or closed. The issue is repository-wide,
+  does not expire, and is not
   split by workflow ref. The workflow never edits, closes, or deletes it. An
   explicit repository administrator edit or deletion is the only bypass; before
   taking that action, verify the exact item state in the Developer Dashboard and
   treat any uncertain outcome as requiring manual resolution. Closing an unchanged
   issue is not a bypass.
-- A successful prior upload without a corresponding pending/published submission
-  also requires Dashboard resolution. The helper treats that store status as
-  ambiguous and will not upload again automatically.
+- An upload-attempt issue without its canonical linked synchronous-success issue
+  can never authorize automated submission. It also blocks another automated
+  upload. Inspect the Dashboard and recover manually; do not fabricate, edit, or
+  delete a success record. A success issue with no exact pending/published state
+  authorizes submission only through the separate confirmed and approved submit
+  run. `fetchStatus` alone cannot prove which unsubmitted draft bytes are present.
+- A submit-attempt issue without exact visible pending/published `0.3.0` state is an
+  uncertain outcome and blocks retry. Inspect the Dashboard and resolve manually.
 - Resolve policy warnings, takedowns, rejected submissions, staged releases, or
   conflicting active submissions in the Dashboard. The automation fails closed
   and does not cancel anything.
