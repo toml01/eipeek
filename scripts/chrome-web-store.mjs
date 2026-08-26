@@ -847,6 +847,15 @@ function assertResumeEvidenceMatchesAttempt(resume, attempt) {
     'Upload resume must run separately from the original failed upload run');
 }
 
+function assertOpenPinnedRecoveryAttempt(attempt) {
+  invariant(attempt.number === SKIPPED_UPLOAD_RECOVERY_CONTRACT.issueNumber,
+    'Skipped-upload recovery is restricted to the reviewed original upload-attempt issue');
+  invariant(attempt.marker.payload.runId === SKIPPED_UPLOAD_RECOVERY_CONTRACT.runId,
+    'Skipped-upload recovery is restricted to the reviewed original workflow run');
+  invariant(attempt.state === 'open',
+    'The original upload-attempt issue must remain open throughout recovery');
+}
+
 async function scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs }) {
   const expected = rolloutSharedIdentity(identity);
   const records = {
@@ -903,6 +912,7 @@ async function scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs
       && resume.marker.payload.uploadAttemptIssueUrl === attempt.issueUrl,
     'Upload resume ledger does not link the exact original upload attempt ledger');
     assertResumeEvidenceMatchesAttempt(resume, attempt);
+    assertOpenPinnedRecoveryAttempt(attempt);
   }
   if (normalSuccess) {
     invariant(attempt !== undefined, 'Upload success ledger exists without its upload attempt ledger');
@@ -1300,12 +1310,7 @@ export async function claimUploadResumeAttempt({ token, fetchImpl = fetch,
   invariant(scan.records.submitAttempt.length === 0,
     'Skipped-upload recovery requires no submit-attempt ledger');
   const attempt = scan.records.uploadAttempt[0];
-  invariant(attempt.number === SKIPPED_UPLOAD_RECOVERY_CONTRACT.issueNumber,
-    'Skipped-upload recovery is restricted to the reviewed original upload-attempt issue');
-  invariant(attempt.state === 'open',
-    'The original upload-attempt issue must remain open for skipped-upload recovery');
-  invariant(attempt.marker.payload.runId === SKIPPED_UPLOAD_RECOVERY_CONTRACT.runId,
-    'Skipped-upload recovery is restricted to the reviewed original workflow run');
+  assertOpenPinnedRecoveryAttempt(attempt);
   const currentRun = rolloutRunIdentity({ repository: scan.expected.repository, ...identity });
   invariant(currentRun.runAttempt === 1, 'Skipped-upload recovery is restricted to workflow run attempt 1');
   invariant(currentRun.runId !== attempt.marker.payload.runId,
@@ -1324,6 +1329,7 @@ export async function claimUploadResumeAttempt({ token, fetchImpl = fetch,
     label: 'Created upload-resume-attempt ledger',
     matches: (records) => records.uploadAttempt.length === 1
       && records.uploadAttempt[0].number === attempt.number
+      && records.uploadAttempt[0].state === 'open'
       && records.uploadResumeAttempt.length === 1
       && records.uploadResumeAttempt[0].number === issue.number
       && records.uploadSuccess.length === 0
@@ -1356,11 +1362,7 @@ export async function recordRecoveryUploadSuccess({ token, fetchImpl = fetch,
   invariant(scan.records.submitAttempt.length === 0, 'A submit attempt cannot predate recovery upload success');
   const attempt = scan.records.uploadAttempt[0];
   const resume = scan.records.uploadResumeAttempt[0];
-  invariant(attempt.number === SKIPPED_UPLOAD_RECOVERY_CONTRACT.issueNumber
-    && attempt.marker.payload.runId === SKIPPED_UPLOAD_RECOVERY_CONTRACT.runId,
-  'Recovery upload success is restricted to the reviewed original incident ledger');
-  invariant(attempt.state === 'open',
-    'The original upload-attempt issue must remain open before recovery ledger creation');
+  assertOpenPinnedRecoveryAttempt(attempt);
   const currentRun = rolloutRunIdentity({ repository: scan.expected.repository, ...identity });
   assertSameRolloutRun(currentRun, resume.marker.payload,
     'Recovery upload success run identity');
@@ -1376,6 +1378,7 @@ export async function recordRecoveryUploadSuccess({ token, fetchImpl = fetch,
     label: 'Created recovery upload-success/v2 ledger',
     matches: (records) => records.uploadAttempt.length === 1
       && records.uploadAttempt[0].number === attempt.number
+      && records.uploadAttempt[0].state === 'open'
       && records.uploadResumeAttempt.length === 1
       && records.uploadResumeAttempt[0].number === resume.number
       && records.uploadSuccess.length === 0
@@ -1402,6 +1405,7 @@ export async function verifyUploadLedgers({ token, fetchImpl = fetch,
   invariant(successes.length === 1, 'Exactly one canonical linked upload success ledger is required');
   const attempt = scan.records.uploadAttempt[0];
   const resume = scan.records.uploadResumeAttempt[0];
+  if (resume !== undefined) assertOpenPinnedRecoveryAttempt(attempt);
   const success = successes[0];
   const submit = scan.records.submitAttempt[0];
   return {
@@ -1431,6 +1435,8 @@ export async function claimSubmitAttempt({ token, fetchImpl = fetch,
   invariant(scan.records.submitAttempt.length === 0,
     'A submit attempt ledger already exists; inspect exact store status and do not retry');
   const attempt = scan.records.uploadAttempt[0];
+  const resume = scan.records.uploadResumeAttempt[0];
+  if (resume !== undefined) assertOpenPinnedRecoveryAttempt(attempt);
   const success = successes[0];
   const issue = await createRolloutLedger({ scan, type: 'submitAttempt', input: {
     ...identity,
@@ -1444,6 +1450,8 @@ export async function claimSubmitAttempt({ token, fetchImpl = fetch,
     label: 'Created submit-attempt ledger',
     matches: (records) => records.uploadAttempt.length === 1
       && records.uploadAttempt[0].number === attempt.number
+      && (records.uploadResumeAttempt.length === 0
+        || records.uploadAttempt[0].state === 'open')
       && records.uploadSuccess.length + records.recoveryUploadSuccess.length === 1
       && (records.uploadSuccess[0] ?? records.recoveryUploadSuccess[0]).number === success.number
       && records.submitAttempt.length === 1

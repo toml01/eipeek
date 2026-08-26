@@ -169,7 +169,6 @@ function priorRun(overrides: Record<string, unknown> = {}) {
     status: 'completed',
     conclusion: 'failure',
     head_sha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
-    workflow_sha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
     ...overrides,
   };
 }
@@ -235,11 +234,11 @@ function otherPriorJob(id: number, name = `Unrelated completed job ${id}`,
 
 function historicalIncidentJobs() {
   return [
-    otherPriorJob(98255955969, 'Validate immutable release inputs'),
-    otherPriorJob(98255955970, 'Read Chrome Web Store status', { conclusion: 'skipped' }),
+    otherPriorJob(98255839457, 'Validate immutable release inputs'),
     priorJob(),
-    otherPriorJob(98255955972, 'Protected v0.3.0 review submission', { conclusion: 'skipped' }),
-    otherPriorJob(98255955973, 'Protected future release upload and publish', { conclusion: 'skipped' }),
+    otherPriorJob(98255957499, 'Read Chrome Web Store status', { conclusion: 'skipped' }),
+    otherPriorJob(98255957552, 'Protected v0.3.0 review submission', { conclusion: 'skipped' }),
+    otherPriorJob(98255957972, 'Protected future release upload and publish', { conclusion: 'skipped' }),
   ];
 }
 
@@ -775,6 +774,14 @@ describe('pinned skipped-upload Actions proof', () => {
     });
     const jobs = historicalIncidentJobs();
     expect(jobs).toHaveLength(5);
+    expect(jobs.map((job) => job.id)).toEqual([
+      98255839457,
+      98255955971,
+      98255957499,
+      98255957552,
+      98255957972,
+    ]);
+    expect(priorRun()).not.toHaveProperty('workflow_sha');
     expect(jobs.find((job) => job.id === 98255955971)).toMatchObject({
       id: 98255955971,
       name: 'Protected v0.3.0 draft upload',
@@ -1130,6 +1137,39 @@ describe('two-stage rollout ledgers', () => {
     expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 19, 29]);
   });
 
+  it('rejects a resume claim when issue #9 closes between visibility and confirmation scans', async () => {
+    const attempt = originalAttemptIssue();
+    const closedAttempt = originalAttemptIssue(9, 'closed');
+    const resume = recoveryResumeIssue();
+    const issueListUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues?state=all&sort=created&direction=asc&per_page=100&page=1`;
+    const runApiUrl = 'https://api.github.com/repos/toml01/eipeek/actions/runs/32993251330';
+    const sequence = strictFetchSequence([
+      { url: issueListUrl, body: [attempt] },
+      { url: runApiUrl, body: priorRun() },
+      { url: `${runApiUrl}/attempts/1`, body: priorRun() },
+      { url: `${runApiUrl}/attempts/1/jobs?per_page=100&page=1`, body: {
+        total_count: 5, jobs: historicalIncidentJobs(),
+      } },
+      { url: 'https://api.github.com/repos/toml01/eipeek/actions/jobs/98255955971', body: priorJob() },
+      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues`, body: resume, status: 201, method: 'POST' },
+      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues/${resume.number}`, body: resume },
+      { url: issueListUrl, body: [attempt, resume] },
+      { url: issueListUrl, body: [closedAttempt, resume] },
+    ]);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    await expect(claimUploadResumeAttempt({
+      ...RECOVERY_ROLLOUT,
+      token: 'github-token',
+      fetchImpl: sequence.fetchMock,
+      sleep,
+      visibilityDelaysMs: [0],
+      confirmationDelayMs: 29,
+    })).rejects.toThrow(/must remain open throughout recovery/i);
+    expect(sequence.remaining).toHaveLength(0);
+    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 29]);
+    expect(sequence.fetchMock.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(1);
+  });
+
   it('records only recovery success/v2 in the same resume run and stably verifies it', async () => {
     const attempt = originalAttemptIssue();
     const resume = recoveryResumeIssue();
@@ -1173,6 +1213,85 @@ describe('two-stage rollout ledgers', () => {
       uploadSuccessIssueNumber: success.number,
       recoveryChain: true,
     });
+  });
+
+  it('rejects recovery-success recording when issue #9 is closed before any mutation', async () => {
+    const closedAttempt = originalAttemptIssue(9, 'closed');
+    const resume = recoveryResumeIssue();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/issues?state=all')) return jsonResponse([closedAttempt, resume]);
+      throw new Error(`Mutation or Actions request must not run: ${url}`);
+    });
+    await expect(recordRecoveryUploadSuccess({
+      ...RECOVERY_ROLLOUT,
+      ...UPLOAD_PROOF,
+      token: 'github-token',
+      fetchImpl: fetchMock,
+    })).rejects.toThrow(/must remain open throughout recovery/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
+  });
+
+  it('rejects a completed recovery chain when issue #9 is closed', async () => {
+    const closedAttempt = originalAttemptIssue(9, 'closed');
+    const resume = recoveryResumeIssue();
+    const success = recoverySuccessIssue(11, resume);
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/issues?state=all')) return jsonResponse([closedAttempt, resume, success]);
+      throw new Error(`Unexpected request ${url}`);
+    });
+    await expect(verifyUploadLedgers({
+      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
+    })).rejects.toThrow(/must remain open throughout recovery/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects claimSubmitAttempt for a closed issue #9 recovery chain before mutation', async () => {
+    const closedAttempt = originalAttemptIssue(9, 'closed');
+    const resume = recoveryResumeIssue();
+    const success = recoverySuccessIssue(11, resume);
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/issues?state=all')) return jsonResponse([closedAttempt, resume, success]);
+      throw new Error(`Issue mutation must not run: ${url}`);
+    });
+    await expect(claimSubmitAttempt({
+      ...RECOVERY_ROLLOUT, token: 'github-token', fetchImpl: fetchMock,
+    })).rejects.toThrow(/must remain open throughout recovery/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toContain('/issues?state=all');
+  });
+
+  it('rejects submit authorization when issue #9 closes during final stable verification', async () => {
+    const attempt = originalAttemptIssue();
+    const closedAttempt = originalAttemptIssue(9, 'closed');
+    const resume = recoveryResumeIssue();
+    const success = recoverySuccessIssue(11, resume);
+    const submit = rolloutIssue(12, formatRolloutLedgerMarker('submitAttempt', {
+      ...RECOVERY_ROLLOUT,
+      uploadAttemptIssueNumber: 9,
+      uploadAttemptIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/9`,
+      uploadSuccessIssueNumber: 11,
+      uploadSuccessIssueUrl: `https://github.com/${EXPECTED_REPOSITORY}/issues/11`,
+    }));
+    const issueListUrl = `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues?state=all&sort=created&direction=asc&per_page=100&page=1`;
+    const sequence = strictFetchSequence([
+      { url: issueListUrl, body: [attempt, resume, success] },
+      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues`, body: submit, status: 201, method: 'POST' },
+      { url: `https://api.github.com/repos/${EXPECTED_REPOSITORY}/issues/${submit.number}`, body: submit },
+      { url: issueListUrl, body: [attempt, resume, success, submit] },
+      { url: issueListUrl, body: [closedAttempt, resume, success, submit] },
+    ]);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    await expect(claimSubmitAttempt({
+      ...RECOVERY_ROLLOUT,
+      token: 'github-token',
+      fetchImpl: sequence.fetchMock,
+      sleep,
+      visibilityDelaysMs: [0],
+      confirmationDelayMs: 37,
+    })).rejects.toThrow(/must remain open throughout recovery/i);
+    expect(sequence.remaining).toHaveLength(0);
+    expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([0, 37]);
   });
 
   it('permanently blocks a second recovery after the resume claim, even without success', async () => {
@@ -1511,7 +1630,8 @@ describe('two-stage rollout ledgers', () => {
       .resolves.toMatchObject({ issueNumber: 11, uploadAttemptIssueNumber: 10 });
     expectOnlyGitHubRequests(successFetch);
 
-    const verifyFetch = vi.fn().mockResolvedValueOnce(jsonResponse([attempt, success]));
+    const closedAttempt = { ...attempt, state: 'closed' };
+    const verifyFetch = vi.fn().mockResolvedValueOnce(jsonResponse([closedAttempt, success]));
     await expect(verifyUploadLedgers({ ...ROLLOUT, token: 'github-token', fetchImpl: verifyFetch }))
       .resolves.toMatchObject({
         uploadAttemptIssueNumber: 10,
@@ -1528,11 +1648,11 @@ describe('two-stage rollout ledgers', () => {
     });
     const submit = rolloutIssue(12, submitMarker);
     const submitFetch = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([attempt, success]))
+      .mockResolvedValueOnce(jsonResponse([closedAttempt, success]))
       .mockResolvedValueOnce(jsonResponse(submit, 201))
       .mockResolvedValueOnce(jsonResponse(submit))
-      .mockResolvedValueOnce(jsonResponse([attempt, success, submit]))
-      .mockResolvedValueOnce(jsonResponse([attempt, success, submit]));
+      .mockResolvedValueOnce(jsonResponse([closedAttempt, success, submit]))
+      .mockResolvedValueOnce(jsonResponse([closedAttempt, success, submit]));
     await expect(claimSubmitAttempt({
       ...ROLLOUT, token: 'github-token', fetchImpl: submitFetch, ...noLedgerWait(),
     }))
