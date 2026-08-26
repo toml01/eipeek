@@ -528,9 +528,12 @@ Chrome Web Store releases use keyless Google Workload Identity Federation and a
 protected GitHub environment. See the
 [publishing runbook](docs/chrome-web-store-publishing.md) for setup, preflight,
 approval, and recovery steps. The manual `v0.3.0` rollout is deliberately split:
-upload the draft with `upload draft v0.3.0 only`, save only the Dashboard `alarms`
-justification after confirming the detailed description is unchanged, then obtain
-explicit second approval and submit with
+the initial run created only permanent upload-attempt issue #9 and its CWS upload
+step was skipped. After the recovery change is merged, the read-only checks pass,
+and fresh explicit approval is obtained, its one-shot `resume-upload` operation
+requires `resume upload draft v0.3.0 after verified ledger-only failure`. Then save
+only the Dashboard `alarms` justification after confirming the detailed
+description is unchanged, obtain explicit second approval, and submit with
 `submit v0.3.0 after saving alarms justification`. Manual combined publishing is
 not available; later release events retain the protected combined path.
 
