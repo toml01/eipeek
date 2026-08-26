@@ -10,7 +10,7 @@ on:
         required: true
         type: string
       operation:
-        description: Read-only validation/status, or a protected v0.3.0 rollout stage
+        description: Read-only validation/status, or a protected v0.3.0 rollout/recovery stage
         required: true
         default: validate
         type: choice
@@ -18,6 +18,7 @@ on:
           - validate
           - status
           - upload
+          - resume-upload
           - submit
       confirmation:
         description: Exact phrase documented for the selected upload or submit stage
@@ -180,7 +181,9 @@ jobs:
     name: Protected v0.3.0 draft upload
     if: >-
       github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
-      inputs.operation == 'upload' && inputs.release_tag == 'v0.3.0'
+      inputs.release_tag == 'v0.3.0' &&
+      (inputs.operation == 'upload' ||
+      (inputs.operation == 'resume-upload' && github.run_attempt == 1))
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -189,6 +192,7 @@ jobs:
       contents: read
       id-token: write
       issues: write
+      actions: read
     steps:
       - name: Check out trusted workflow helper
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -276,13 +280,13 @@ jobs:
           --version "${RELEASE_VERSION}"
 
       - name: Refuse an in-place upload rerun before mutation
-        if: steps.plan.outputs.action == 'upload' && github.run_attempt != 1
+        if: inputs.operation == 'upload' && steps.plan.outputs.action == 'upload' && github.run_attempt != 1
         run: |
           echo 'An upload rerun is forbidden. Inspect fetchStatus, the attempt issue, and the Developer Dashboard.' >&2
           exit 1
 
       - name: Create and verify canonical pre-upload attempt ledger
-        if: steps.plan.outputs.action == 'upload'
+        if: inputs.operation == 'upload' && steps.plan.outputs.action == 'upload'
         id: upload-attempt
         shell: bash
         env: &rollout-ledger
@@ -316,8 +320,35 @@ jobs:
             --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" --run-url "${RUN_URL}" \
             --workflow-ref "${WORKFLOW_REF}" --workflow-sha "${WORKFLOW_SHA}"
 
+      - name: Require exact upload plan for one-shot recovery
+        if: inputs.operation == 'resume-upload' && steps.plan.outputs.action != 'upload'
+        env:
+          PLANNED_ACTION: ${{ steps.plan.outputs.action }}
+        run: |
+          echo "Skipped-upload recovery requires exact plan action upload; received ${PLANNED_ACTION}." >&2
+          exit 1
+
+      - name: Prove skipped prior upload and create canonical one-shot resume ledger
+        if: inputs.operation == 'resume-upload' && steps.plan.outputs.action == 'upload'
+        id: upload-resume-attempt
+        shell: bash
+        env: *rollout-ledger
+        run: |
+          set -euo pipefail
+          node scripts/chrome-web-store.mjs claim-upload-resume-attempt \
+            --repository "${GITHUB_REPOSITORY}" --repository-id "${REPOSITORY_ID}" \
+            --tag "${RELEASE_TAG}" --version "${RELEASE_VERSION}" \
+            --release-id "${RELEASE_ID}" --asset-id "${ASSET_ID}" \
+            --asset-name "${ASSET_NAME}" --asset-size "${ASSET_SIZE}" \
+            --tag-object "${TAG_OBJECT}" --commit "${RELEASE_COMMIT}" --sha256 "${SHA256}" \
+            --publisher-id "${CWS_PUBLISHER_ID}" --extension-id "${CWS_EXTENSION_ID}" \
+            --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" --run-url "${RUN_URL}" \
+            --workflow-ref "${WORKFLOW_REF}" --workflow-sha "${WORKFLOW_SHA}"
+
       - name: Upload v0.3.0 draft without publishing
-        if: steps.plan.outputs.action == 'upload'
+        if: >-
+          steps.plan.outputs.action == 'upload' &&
+          (inputs.operation == 'upload' || inputs.operation == 'resume-upload')
         id: upload-draft
         env:
           CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
@@ -333,7 +364,7 @@ jobs:
           --version "${RELEASE_VERSION}"
 
       - name: Create and verify canonical synchronous upload-success ledger
-        if: steps.upload-draft.outputs.mutated == 'true'
+        if: inputs.operation == 'upload' && steps.upload-draft.outputs.mutated == 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -361,6 +392,47 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/chrome-web-store.mjs record-upload-success \
+            --repository "${GITHUB_REPOSITORY}" --repository-id "${REPOSITORY_ID}" \
+            --tag "${RELEASE_TAG}" --version "${RELEASE_VERSION}" \
+            --release-id "${RELEASE_ID}" --asset-id "${ASSET_ID}" \
+            --asset-name "${ASSET_NAME}" --asset-size "${ASSET_SIZE}" \
+            --tag-object "${TAG_OBJECT}" --commit "${RELEASE_COMMIT}" --sha256 "${SHA256}" \
+            --publisher-id "${CWS_PUBLISHER_ID}" --extension-id "${CWS_EXTENSION_ID}" \
+            --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" --run-url "${RUN_URL}" \
+            --workflow-ref "${WORKFLOW_REF}" --workflow-sha "${WORKFLOW_SHA}" \
+            --upload-response-item-id "${UPLOAD_RESPONSE_ITEM_ID}" \
+            --upload-response-name "${UPLOAD_RESPONSE_NAME}" \
+            --upload-state "${UPLOAD_STATE}" --crx-version "${CRX_VERSION}"
+
+      - name: Create and verify canonical recovered synchronous upload-success/v2 ledger
+        if: inputs.operation == 'resume-upload' && steps.upload-draft.outputs.mutated == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_ID: ${{ needs.validate.outputs.release_id }}
+          ASSET_ID: ${{ needs.validate.outputs.asset_id }}
+          ASSET_NAME: ${{ needs.validate.outputs.asset_name }}
+          ASSET_SIZE: ${{ needs.validate.outputs.asset_size }}
+          TAG_OBJECT: ${{ needs.validate.outputs.tag_object }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          SHA256: ${{ needs.validate.outputs.sha256 }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          UPLOAD_RESPONSE_ITEM_ID: ${{ steps.upload-draft.outputs.upload_response_item_id }}
+          UPLOAD_RESPONSE_NAME: ${{ steps.upload-draft.outputs.upload_response_name }}
+          UPLOAD_STATE: ${{ steps.upload-draft.outputs.upload_state }}
+          CRX_VERSION: ${{ steps.upload-draft.outputs.crx_version }}
+        run: |
+          set -euo pipefail
+          node scripts/chrome-web-store.mjs record-recovery-upload-success \
             --repository "${GITHUB_REPOSITORY}" --repository-id "${REPOSITORY_ID}" \
             --tag "${RELEASE_TAG}" --version "${RELEASE_VERSION}" \
             --release-id "${RELEASE_ID}" --asset-id "${ASSET_ID}" \

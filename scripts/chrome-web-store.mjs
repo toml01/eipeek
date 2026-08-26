@@ -47,6 +47,31 @@ export const LEDGER_CONFIRMATION_DELAY_MS = 1_000;
 const LEGACY_ROLLOUT_TAG = 'v0.3.0';
 const WORKFLOW_PATH = '.github/workflows/chrome-web-store.yml';
 const GITHUB_ACTIONS_BOT_ID = 41898282;
+export const SKIPPED_UPLOAD_RECOVERY_CONTRACT = Object.freeze({
+  workflowSha: '06095bccb8b2fe00756b1cf34704a0d063f03c94',
+  workflowPath: WORKFLOW_PATH,
+  jobName: 'Protected v0.3.0 draft upload',
+  steps: Object.freeze({
+    ledger: Object.freeze({
+      number: 9,
+      name: 'Create and verify canonical pre-upload attempt ledger',
+      status: 'completed',
+      conclusion: 'failure',
+    }),
+    upload: Object.freeze({
+      number: 10,
+      name: 'Upload v0.3.0 draft without publishing',
+      status: 'completed',
+      conclusion: 'skipped',
+    }),
+    successLedger: Object.freeze({
+      number: 11,
+      name: 'Create and verify canonical synchronous upload-success ledger',
+      status: 'completed',
+      conclusion: 'skipped',
+    }),
+  }),
+});
 const ATTEMPT_MARKER_SCHEMA = 'eipeek-cws-publish-attempt/v1';
 const ATTEMPT_MARKER_TITLE_PREFIX = '[EIPeek CWS pre-mutation attempt v1] SHA-256 ';
 const ATTEMPT_MARKER_BODY_PREFIX = `<!-- ${ATTEMPT_MARKER_SCHEMA} -->
@@ -73,6 +98,18 @@ const ROLLOUT_LEDGER_TYPES = Object.freeze({
     titlePrefix: '[EIPeek CWS upload success v1] ',
     heading: 'Chrome Web Store synchronous upload success ledger',
     warning: 'This records the exact synchronous API response proof that authorized the separate submission gate.',
+  }),
+  uploadResumeAttempt: Object.freeze({
+    schema: 'eipeek-cws-upload-resume-attempt/v1',
+    titlePrefix: '[EIPeek CWS upload resume attempt v1] ',
+    heading: 'Chrome Web Store one-shot upload resume attempt ledger',
+    warning: 'This records the one-shot pre-upload recovery claim and pinned proof that the original upload step was skipped.',
+  }),
+  recoveryUploadSuccess: Object.freeze({
+    schema: 'eipeek-cws-upload-success/v2',
+    titlePrefix: '[EIPeek CWS upload success v2] ',
+    heading: 'Chrome Web Store recovered synchronous upload success ledger',
+    warning: 'This records the exact synchronous API response proof for the one-shot skipped-upload recovery chain.',
   }),
   submitAttempt: Object.freeze({
     schema: 'eipeek-cws-submit-attempt/v1',
@@ -132,6 +169,13 @@ export function requireUploadConfirmation(tag, confirmation) {
   parseReleaseTag(tag);
   invariant(confirmation === `upload draft ${tag} only`,
     `Upload confirmation must be exactly "upload draft ${tag} only"`);
+}
+
+export function requireResumeUploadConfirmation(tag, confirmation) {
+  parseReleaseTag(tag);
+  requireManualPublishTag(tag);
+  invariant(confirmation === `resume upload draft ${tag} after verified ledger-only failure`,
+    `Resume-upload confirmation must be exactly "resume upload draft ${tag} after verified ledger-only failure"`);
 }
 
 export function requireSubmitConfirmation(tag, confirmation) {
@@ -493,6 +537,110 @@ function rolloutRunIdentity({ repository, runId, runAttempt, runUrl, workflowRef
   };
 }
 
+function assertExactObjectKeys(value, expectedKeys, label) {
+  invariant(isRecord(value), `${label} must be an object`);
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  invariant(JSON.stringify(actual) === JSON.stringify(expected), `${label} fields are invalid`);
+}
+
+const RECOVERY_RUN_EVIDENCE_KEYS = Object.freeze([
+  'repository', 'repositoryId', 'runId', 'runAttempt', 'runUrl', 'apiUrl', 'workflowPath',
+  'workflowSha', 'headSha', 'headBranch', 'event', 'status', 'conclusion',
+]);
+const RECOVERY_JOB_EVIDENCE_KEYS = Object.freeze([
+  'jobsTotalCount', 'jobId', 'apiUrl', 'jobUrl', 'jobName', 'status', 'conclusion',
+  'headSha', 'runId', 'runAttempt', 'steps',
+]);
+const RECOVERY_STEP_EVIDENCE_KEYS = Object.freeze(['number', 'name', 'status', 'conclusion']);
+
+function canonicalRecoveryEvidence(input) {
+  assertExactObjectKeys(input, ['run', 'job'], 'Recovery evidence');
+  assertExactObjectKeys(input.run, RECOVERY_RUN_EVIDENCE_KEYS, 'Recovery run evidence');
+  const repository = input.run.repository;
+  validateRepositoryName(repository);
+  invariant(parsePositiveId(input.run.repositoryId, 'Recovery repository ID') === EXPECTED_REPOSITORY_ID,
+    'Recovery repository numeric ID does not match');
+  const runId = parsePositiveId(input.run.runId, 'Prior workflow run ID');
+  const runAttempt = parsePositiveId(input.run.runAttempt, 'Prior workflow run attempt');
+  invariant(runAttempt === 1, 'Skipped-upload recovery recognizes only prior run attempt 1');
+  const runUrl = `https://github.com/${repository}/actions/runs/${runId}`;
+  invariant(input.run.runUrl === runUrl, 'Recovery run evidence URL does not match');
+  const apiRoot = `https://api.github.com/repos/${repository}`;
+  const runApiUrl = `${apiRoot}/actions/runs/${runId}`;
+  invariant(input.run.apiUrl === runApiUrl, 'Recovery run evidence API URL does not match');
+  invariant(input.run.workflowPath === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowPath,
+    'Recovery run evidence workflow path is not recognized');
+  invariant(input.run.workflowSha === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+    'Recovery run evidence workflow SHA is not recognized');
+  invariant(input.run.headSha === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+    'Recovery run evidence head SHA is not recognized');
+  invariant(input.run.headBranch === 'main', 'Recovery run evidence branch must be main');
+  invariant(input.run.event === 'workflow_dispatch', 'Recovery run evidence event must be workflow_dispatch');
+  invariant(input.run.status === 'completed', 'Recovery run evidence must be completed');
+  invariant(input.run.conclusion === 'failure', 'Recovery run evidence must have failed');
+
+  assertExactObjectKeys(input.job, RECOVERY_JOB_EVIDENCE_KEYS, 'Recovery job evidence');
+  const jobsTotalCount = parsePositiveId(input.job.jobsTotalCount, 'Prior run job count');
+  const jobId = parsePositiveId(input.job.jobId, 'Prior upload job ID');
+  const jobApiUrl = `${apiRoot}/actions/jobs/${jobId}`;
+  invariant(input.job.apiUrl === jobApiUrl, 'Recovery job evidence API URL does not match');
+  const acceptedJobUrls = new Set([
+    `${runUrl}/job/${jobId}`,
+    `https://github.com/${repository}/runs/${jobId}`,
+  ]);
+  invariant(acceptedJobUrls.has(input.job.jobUrl), 'Recovery job evidence URL does not match');
+  invariant(input.job.jobName === SKIPPED_UPLOAD_RECOVERY_CONTRACT.jobName,
+    'Recovery job evidence name is not recognized');
+  invariant(input.job.status === 'completed', 'Recovery job evidence must be completed');
+  invariant(input.job.conclusion === 'failure', 'Recovery job evidence must have failed');
+  invariant(input.job.headSha === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+    'Recovery job evidence head SHA is not recognized');
+  invariant(input.job.runId === runId && input.job.runAttempt === runAttempt,
+    'Recovery job evidence does not match its run');
+  invariant(Array.isArray(input.job.steps) && input.job.steps.length === 3,
+    'Recovery job evidence must contain exactly the three pinned steps');
+  const expectedSteps = Object.values(SKIPPED_UPLOAD_RECOVERY_CONTRACT.steps);
+  const steps = input.job.steps.map((step, index) => {
+    assertExactObjectKeys(step, RECOVERY_STEP_EVIDENCE_KEYS, 'Recovery step evidence');
+    const expected = expectedSteps[index];
+    invariant(step.number === expected.number && step.name === expected.name
+      && step.status === expected.status && step.conclusion === expected.conclusion,
+    `Recovery step ${expected.number} evidence does not match the pinned contract`);
+    return { number: step.number, name: step.name, status: step.status, conclusion: step.conclusion };
+  });
+  return {
+    run: {
+      repository,
+      repositoryId: EXPECTED_REPOSITORY_ID,
+      runId,
+      runAttempt,
+      runUrl,
+      apiUrl: runApiUrl,
+      workflowPath: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowPath,
+      workflowSha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+      headSha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+      headBranch: 'main',
+      event: 'workflow_dispatch',
+      status: 'completed',
+      conclusion: 'failure',
+    },
+    job: {
+      jobsTotalCount,
+      jobId,
+      apiUrl: jobApiUrl,
+      jobUrl: input.job.jobUrl,
+      jobName: SKIPPED_UPLOAD_RECOVERY_CONTRACT.jobName,
+      status: 'completed',
+      conclusion: 'failure',
+      headSha: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+      runId,
+      runAttempt,
+      steps,
+    },
+  };
+}
+
 function rolloutBodyPrefix(type) {
   const definition = ROLLOUT_LEDGER_TYPES[type];
   invariant(definition !== undefined, `Unknown rollout ledger type ${String(type)}`);
@@ -500,7 +648,8 @@ function rolloutBodyPrefix(type) {
 }
 
 function rolloutBodySuffix(type) {
-  return `\n\`\`\`\n\nThis ${type === 'uploadSuccess' ? 'proof' : 'attempt'} issue is never edited, closed, or deleted automatically.\n`;
+  const proof = type === 'uploadSuccess' || type === 'recoveryUploadSuccess';
+  return `\n\`\`\`\n\nThis ${proof ? 'proof' : 'attempt'} issue is never edited, closed, or deleted automatically.\n`;
 }
 
 function rolloutLinks(type, input, shared) {
@@ -508,6 +657,10 @@ function rolloutLinks(type, input, shared) {
   const uploadAttemptIssueNumber = parsePositiveId(input.uploadAttemptIssueNumber, 'Upload attempt issue number');
   const uploadAttemptIssueUrl = `https://github.com/${shared.repository}/issues/${uploadAttemptIssueNumber}`;
   invariant(input.uploadAttemptIssueUrl === uploadAttemptIssueUrl, 'Upload attempt issue URL does not match');
+  const uploadAttemptLink = { uploadAttemptIssueNumber, uploadAttemptIssueUrl };
+  if (type === 'uploadResumeAttempt') {
+    return { ...uploadAttemptLink, priorEvidence: canonicalRecoveryEvidence(input.priorEvidence) };
+  }
   if (type === 'uploadSuccess') {
     invariant(input.uploadResponseItemId === shared.extensionId,
       'Upload success proof item ID does not match the CWS target');
@@ -517,8 +670,28 @@ function rolloutLinks(type, input, shared) {
     invariant(input.crxVersion === shared.releaseVersion,
       'Upload success proof CRX version does not match the release');
     return {
-      uploadAttemptIssueNumber,
-      uploadAttemptIssueUrl,
+      ...uploadAttemptLink,
+      uploadResponseItemId: input.uploadResponseItemId,
+      uploadResponseName: input.uploadResponseName,
+      uploadState: input.uploadState,
+      crxVersion: input.crxVersion,
+    };
+  }
+  if (type === 'recoveryUploadSuccess') {
+    const uploadResumeIssueNumber = parsePositiveId(input.uploadResumeIssueNumber, 'Upload resume issue number');
+    const uploadResumeIssueUrl = `https://github.com/${shared.repository}/issues/${uploadResumeIssueNumber}`;
+    invariant(input.uploadResumeIssueUrl === uploadResumeIssueUrl, 'Upload resume issue URL does not match');
+    invariant(input.uploadResponseItemId === shared.extensionId,
+      'Recovery upload success proof item ID does not match the CWS target');
+    invariant(input.uploadResponseName === shared.cwsItemName,
+      'Recovery upload success proof item name does not match the CWS target');
+    invariant(input.uploadState === 'SUCCEEDED', 'Recovery upload success proof must record SUCCEEDED');
+    invariant(input.crxVersion === shared.releaseVersion,
+      'Recovery upload success proof CRX version does not match the release');
+    return {
+      ...uploadAttemptLink,
+      uploadResumeIssueNumber,
+      uploadResumeIssueUrl,
       uploadResponseItemId: input.uploadResponseItemId,
       uploadResponseName: input.uploadResponseName,
       uploadState: input.uploadState,
@@ -528,14 +701,18 @@ function rolloutLinks(type, input, shared) {
   const uploadSuccessIssueNumber = parsePositiveId(input.uploadSuccessIssueNumber, 'Upload success issue number');
   const uploadSuccessIssueUrl = `https://github.com/${shared.repository}/issues/${uploadSuccessIssueNumber}`;
   invariant(input.uploadSuccessIssueUrl === uploadSuccessIssueUrl, 'Upload success issue URL does not match');
-  return { uploadAttemptIssueNumber, uploadAttemptIssueUrl, uploadSuccessIssueNumber, uploadSuccessIssueUrl };
+  return { ...uploadAttemptLink, uploadSuccessIssueNumber, uploadSuccessIssueUrl };
 }
 
 export function formatRolloutLedgerMarker(type, input) {
   const definition = ROLLOUT_LEDGER_TYPES[type];
   invariant(definition !== undefined, `Unknown rollout ledger type ${String(type)}`);
   const shared = rolloutSharedIdentity(input);
-  const operation = type === 'submitAttempt' ? 'submit' : 'upload';
+  const operation = type === 'submitAttempt'
+    ? 'submit'
+    : type === 'uploadResumeAttempt' || type === 'recoveryUploadSuccess'
+      ? 'resume-upload'
+      : 'upload';
   const payload = {
     schema: definition.schema,
     operation,
@@ -554,7 +731,7 @@ function rolloutTypeFromTitle(title) {
     if (title.startsWith(definition.titlePrefix)) return type;
   }
   if (title.startsWith(ROLLOUT_LEDGER_TITLE_ROOT)
-    && /(?:upload attempt|upload success|submit attempt)/.test(title)) {
+    && /(?:upload attempt|upload resume attempt|upload success|submit attempt)/.test(title)) {
     throw new Error('Rollout ledger issue title is malformed');
   }
   return undefined;
@@ -595,8 +772,11 @@ export function validateRolloutLedgerMarker(title, body) {
     workflowSha: payload.workflowSha,
     uploadAttemptIssueNumber: payload.uploadAttemptIssueNumber,
     uploadAttemptIssueUrl: payload.uploadAttemptIssueUrl,
+    uploadResumeIssueNumber: payload.uploadResumeIssueNumber,
+    uploadResumeIssueUrl: payload.uploadResumeIssueUrl,
     uploadSuccessIssueNumber: payload.uploadSuccessIssueNumber,
     uploadSuccessIssueUrl: payload.uploadSuccessIssueUrl,
+    priorEvidence: payload.priorEvidence,
     uploadResponseItemId: payload.uploadResponseItemId,
     uploadResponseName: payload.uploadResponseName,
     uploadState: payload.uploadState,
@@ -634,9 +814,40 @@ function assertRolloutIdentity(payload, expected) {
   }
 }
 
+const ROLLOUT_RUN_KEYS = Object.freeze([
+  'runId', 'runAttempt', 'runUrl', 'workflowRef', 'workflowSha', 'workflowUrl',
+]);
+
+function assertSameRolloutRun(left, right, label) {
+  for (const key of ROLLOUT_RUN_KEYS) {
+    invariant(left[key] === right[key], `${label} ${key} does not match`);
+  }
+}
+
+function assertResumeEvidenceMatchesAttempt(resume, attempt) {
+  const evidence = resume.marker.payload.priorEvidence;
+  const prior = evidence.run;
+  const attemptPayload = attempt.marker.payload;
+  invariant(prior.runId === attemptPayload.runId
+    && prior.runAttempt === attemptPayload.runAttempt
+    && prior.runUrl === attemptPayload.runUrl
+    && prior.workflowSha === attemptPayload.workflowSha,
+  'Upload resume evidence does not identify the exact original upload attempt run');
+  invariant(resume.marker.payload.runAttempt === 1,
+    'Upload resume must be claimed by workflow run attempt 1');
+  invariant(resume.marker.payload.runId !== attemptPayload.runId,
+    'Upload resume must run separately from the original failed upload run');
+}
+
 async function scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs }) {
   const expected = rolloutSharedIdentity(identity);
-  const records = { uploadAttempt: [], uploadSuccess: [], submitAttempt: [] };
+  const records = {
+    uploadAttempt: [],
+    uploadSuccess: [],
+    uploadResumeAttempt: [],
+    recoveryUploadSuccess: [],
+    submitAttempt: [],
+  };
   const apiRoot = `https://api.github.com/repos/${expected.repository}`;
   for (let page = 1; ; page += 1) {
     const issues = await githubIssueJson(fetchImpl,
@@ -652,7 +863,7 @@ async function scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs
         throw new Error(`Malformed staged rollout ledger issue found; refusing to continue: ${error instanceof Error ? error.message : String(error)}`);
       }
       if (type === undefined && typeof issue.body === 'string'
-        && /^<!-- eipeek-cws-(?:upload-attempt|upload-success|submit-attempt)\//.test(issue.body)) {
+        && /^<!-- eipeek-cws-(?:upload-attempt|upload-resume-attempt|upload-success|submit-attempt)\//.test(issue.body)) {
         throw new Error('Malformed staged rollout ledger issue found; schema body has no canonical title');
       }
       if (type === undefined) continue;
@@ -670,18 +881,40 @@ async function scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs
   for (const [type, found] of Object.entries(records)) {
     invariant(found.length <= 1, `Duplicate ${type} staged rollout ledger issues found`);
   }
+  invariant(records.uploadSuccess.length + records.recoveryUploadSuccess.length <= 1,
+    'Both normal and recovery upload-success staged rollout ledgers exist');
   const attempt = records.uploadAttempt[0];
-  const success = records.uploadSuccess[0];
+  const resume = records.uploadResumeAttempt[0];
+  const normalSuccess = records.uploadSuccess[0];
+  const recoverySuccess = records.recoveryUploadSuccess[0];
+  const success = normalSuccess ?? recoverySuccess;
   const submit = records.submitAttempt[0];
-  if (success) {
+  if (resume) {
+    invariant(attempt !== undefined, 'Upload resume ledger exists without its original upload attempt ledger');
+    invariant(resume.marker.payload.uploadAttemptIssueNumber === attempt.number
+      && resume.marker.payload.uploadAttemptIssueUrl === attempt.issueUrl,
+    'Upload resume ledger does not link the exact original upload attempt ledger');
+    assertResumeEvidenceMatchesAttempt(resume, attempt);
+  }
+  if (normalSuccess) {
     invariant(attempt !== undefined, 'Upload success ledger exists without its upload attempt ledger');
-    invariant(success.marker.payload.uploadAttemptIssueNumber === attempt.number
-      && success.marker.payload.uploadAttemptIssueUrl === attempt.issueUrl,
+    invariant(resume === undefined, 'Upload success/v1 cannot coexist with an upload resume ledger');
+    invariant(normalSuccess.marker.payload.uploadAttemptIssueNumber === attempt.number
+      && normalSuccess.marker.payload.uploadAttemptIssueUrl === attempt.issueUrl,
     'Upload success ledger does not link the exact upload attempt ledger');
-    for (const key of ['runId', 'runAttempt', 'runUrl', 'workflowRef', 'workflowSha', 'workflowUrl']) {
-      invariant(success.marker.payload[key] === attempt.marker.payload[key],
-        `Upload success ledger ${key} does not match its upload attempt`);
-    }
+    assertSameRolloutRun(normalSuccess.marker.payload, attempt.marker.payload,
+      'Upload success ledger run identity');
+  }
+  if (recoverySuccess) {
+    invariant(attempt !== undefined && resume !== undefined,
+      'Upload success/v2 exists without the exact upload attempt and resume ledgers');
+    invariant(recoverySuccess.marker.payload.uploadAttemptIssueNumber === attempt.number
+      && recoverySuccess.marker.payload.uploadAttemptIssueUrl === attempt.issueUrl
+      && recoverySuccess.marker.payload.uploadResumeIssueNumber === resume.number
+      && recoverySuccess.marker.payload.uploadResumeIssueUrl === resume.issueUrl,
+    'Upload success/v2 does not link the exact upload attempt and resume ledgers');
+    assertSameRolloutRun(recoverySuccess.marker.payload, resume.marker.payload,
+      'Upload success/v2 run identity');
   }
   if (submit) {
     invariant(attempt !== undefined && success !== undefined,
@@ -693,6 +926,236 @@ async function scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs
     'Submit attempt ledger does not link the exact upload ledgers');
   }
   return { expected, records, apiRoot };
+}
+
+const COMPLETED_CONCLUSIONS = new Set([
+  'success', 'failure', 'neutral', 'cancelled', 'skipped', 'timed_out', 'action_required',
+  'startup_failure', 'stale',
+]);
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  invariant(value === null || ['string', 'number', 'boolean'].includes(typeof value),
+    'GitHub Actions response contains a non-JSON value');
+  return JSON.stringify(value);
+}
+
+function validateRecoveryRunResponse(run, attemptPayload, label) {
+  invariant(isRecord(run), `${label} response is invalid`);
+  const runId = validatePositiveId(run.id, `${label} run ID`);
+  invariant(runId === attemptPayload.runId, `${label} run ID does not match the upload attempt`);
+  const runAttempt = validatePositiveId(run.run_attempt, `${label} run attempt`);
+  invariant(runAttempt === attemptPayload.runAttempt, `${label} run attempt does not match the upload attempt`);
+  invariant(run.url === `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${runId}`,
+    `${label} API URL does not match`);
+  invariant(run.html_url === attemptPayload.runUrl, `${label} HTML URL does not match the upload attempt`);
+  invariant(isRecord(run.repository)
+    && run.repository.id === EXPECTED_REPOSITORY_ID
+    && run.repository.full_name === EXPECTED_REPOSITORY,
+  `${label} repository identity does not match`);
+  invariant(run.path === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowPath,
+    `${label} workflow path does not match the pinned contract`);
+  invariant(run.head_branch === 'main', `${label} branch must be main`);
+  invariant(run.event === 'workflow_dispatch', `${label} event must be workflow_dispatch`);
+  invariant(run.status === 'completed', `${label} is not completed`);
+  invariant(run.conclusion === 'failure', `${label} did not conclude with failure`);
+  invariant(run.head_sha === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+    `${label} head SHA does not match the pinned workflow SHA`);
+  if (Object.hasOwn(run, 'workflow_sha')) {
+    invariant(run.workflow_sha === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+      `${label} workflow SHA does not match the pinned contract`);
+  }
+  return {
+    repository: EXPECTED_REPOSITORY,
+    repositoryId: EXPECTED_REPOSITORY_ID,
+    runId,
+    runAttempt,
+    runUrl: attemptPayload.runUrl,
+    apiUrl: run.url,
+    workflowPath: SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowPath,
+    workflowSha: attemptPayload.workflowSha,
+    headSha: run.head_sha,
+    headBranch: run.head_branch,
+    event: run.event,
+    status: run.status,
+    conclusion: run.conclusion,
+  };
+}
+
+function validateListedJob(job, runId, runAttempt, seenIds) {
+  invariant(isRecord(job), 'Prior run job list contains an invalid job');
+  const jobId = validatePositiveId(job.id, 'Prior run job ID');
+  invariant(!seenIds.has(jobId), `Prior run job list contains duplicate job ID ${jobId}`);
+  seenIds.add(jobId);
+  invariant(typeof job.name === 'string' && job.name.length > 0, 'Prior run job name is invalid');
+  invariant(job.status === 'completed', `Prior run job ${job.name} is not completed`);
+  invariant(typeof job.conclusion === 'string' && COMPLETED_CONCLUSIONS.has(job.conclusion),
+    `Prior run job ${job.name} conclusion is null or unrecognized`);
+  invariant(job.run_id === runId && job.run_attempt === runAttempt,
+    `Prior run job ${job.name} does not match the exact run attempt`);
+  invariant(job.head_sha === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+    `Prior run job ${job.name} head SHA does not match`);
+  invariant(job.head_branch === 'main', `Prior run job ${job.name} branch does not match`);
+  invariant(job.run_url === `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/runs/${runId}`,
+    `Prior run job ${job.name} run URL does not match`);
+  invariant(job.url === `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/jobs/${jobId}`,
+    `Prior run job ${job.name} API URL does not match`);
+  invariant(typeof job.html_url === 'string' && new Set([
+    `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/${runId}/job/${jobId}`,
+    `https://github.com/${EXPECTED_REPOSITORY}/runs/${jobId}`,
+  ]).has(job.html_url), `Prior run job ${job.name} HTML URL does not match`);
+  return jobId;
+}
+
+async function listRecoveryRunJobs({ apiRoot, runId, runAttempt, token, fetchImpl, requestTimeoutMs }) {
+  const jobs = [];
+  const seenIds = new Set();
+  let totalCount;
+  for (let page = 1; ; page += 1) {
+    const response = await githubIssueJson(fetchImpl,
+      `${apiRoot}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100&page=${page}`,
+      token, 'Prior run attempt job list', { requestTimeoutMs });
+    invariant(isRecord(response), 'Prior run attempt job list response is invalid');
+    const pageTotal = response.total_count;
+    invariant(Number.isSafeInteger(pageTotal) && pageTotal >= 0,
+      'Prior run attempt job list total_count is invalid');
+    if (totalCount === undefined) totalCount = pageTotal;
+    invariant(pageTotal === totalCount, 'Prior run attempt job pagination count changed');
+    invariant(Array.isArray(response.jobs) && response.jobs.length <= 100,
+      'Prior run attempt job page is invalid');
+    const remaining = totalCount - jobs.length;
+    invariant(remaining >= 0, 'Prior run attempt job pagination exceeded total_count');
+    const expectedPageLength = Math.min(100, remaining);
+    invariant(response.jobs.length === expectedPageLength,
+      'Prior run attempt job pagination does not match total_count');
+    for (const job of response.jobs) {
+      validateListedJob(job, runId, runAttempt, seenIds);
+      jobs.push(job);
+    }
+    if (jobs.length === totalCount) break;
+  }
+  invariant(jobs.length === totalCount, 'Prior run attempt job pagination is incomplete');
+  return { jobs, totalCount };
+}
+
+function validateRecoveryJobSteps(job) {
+  invariant(job.name === SKIPPED_UPLOAD_RECOVERY_CONTRACT.jobName,
+    'Prior upload job name does not match the pinned recovery contract');
+  invariant(job.status === 'completed' && job.conclusion === 'failure',
+    'Prior upload job must be completed with failure');
+  invariant(Array.isArray(job.steps) && job.steps.length > 0, 'Prior upload job steps are missing');
+  const numbers = new Set();
+  const names = new Set();
+  let previousNumber = 0;
+  for (const step of job.steps) {
+    invariant(isRecord(step), 'Prior upload job contains an invalid step');
+    const number = validatePositiveId(step.number, 'Prior upload job step number');
+    invariant(number > previousNumber, 'Prior upload job steps are duplicated or reordered');
+    previousNumber = number;
+    invariant(!numbers.has(number), `Prior upload job contains duplicate step number ${number}`);
+    numbers.add(number);
+    invariant(typeof step.name === 'string' && step.name.length > 0,
+      `Prior upload job step ${number} name is invalid`);
+    invariant(!names.has(step.name), `Prior upload job contains duplicate step name ${step.name}`);
+    names.add(step.name);
+    invariant(step.status === 'completed', `Prior upload job step ${number} is not completed`);
+    invariant(typeof step.conclusion === 'string' && COMPLETED_CONCLUSIONS.has(step.conclusion),
+      `Prior upload job step ${number} conclusion is null or unrecognized`);
+  }
+  const criticalSteps = Object.values(SKIPPED_UPLOAD_RECOVERY_CONTRACT.steps).map((expected) => {
+    const numbered = job.steps.filter((step) => step.number === expected.number);
+    const named = job.steps.filter((step) => step.name === expected.name);
+    invariant(numbered.length === 1 && named.length === 1 && numbered[0] === named[0],
+      `Prior upload job step ${expected.number} is missing, renamed, duplicated, or reordered`);
+    const actual = numbered[0];
+    invariant(actual.status === expected.status && actual.conclusion === expected.conclusion,
+      `Prior upload job step ${expected.number} did not conclusively ${expected.conclusion === 'skipped' ? 'skip' : 'fail'}`);
+    return {
+      number: actual.number,
+      name: actual.name,
+      status: actual.status,
+      conclusion: actual.conclusion,
+    };
+  });
+  return criticalSteps;
+}
+
+export async function verifySkippedUploadRecoveryEvidence({
+  uploadAttempt,
+  token,
+  fetchImpl = fetch,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+}) {
+  invariant(isRecord(uploadAttempt) && isRecord(uploadAttempt.marker),
+    'A scanned canonical upload-attempt ledger is required for recovery proof');
+  invariant(uploadAttempt.marker.type === 'uploadAttempt',
+    'Recovery proof requires an upload-attempt/v1 ledger');
+  const marker = validateRolloutLedgerMarker(uploadAttempt.marker.title, uploadAttempt.marker.body);
+  invariant(marker.type === 'uploadAttempt', 'Recovery proof ledger schema is not upload-attempt/v1');
+  const issueNumber = parsePositiveId(uploadAttempt.number, 'Upload attempt issue number');
+  invariant(uploadAttempt.issueUrl === `https://github.com/${EXPECTED_REPOSITORY}/issues/${issueNumber}`,
+    'Upload attempt issue URL does not match its number');
+  const attemptPayload = marker.payload;
+  invariant(attemptPayload.runAttempt === 1,
+    'Skipped-upload recovery recognizes only original workflow run attempt 1');
+  invariant(attemptPayload.workflowSha === SKIPPED_UPLOAD_RECOVERY_CONTRACT.workflowSha,
+    'Upload attempt workflow SHA has no reviewed skipped-upload recovery contract');
+  const apiRoot = `https://api.github.com/repos/${EXPECTED_REPOSITORY}`;
+  const runUrl = `${apiRoot}/actions/runs/${attemptPayload.runId}`;
+  const latestRun = await githubIssueJson(fetchImpl, runUrl, token, 'Latest prior workflow run', {
+    requestTimeoutMs,
+  });
+  invariant(isRecord(latestRun), 'Latest prior workflow run response is invalid');
+  const latestAttempt = validatePositiveId(latestRun.run_attempt, 'Latest prior workflow run attempt');
+  invariant(latestAttempt === attemptPayload.runAttempt,
+    'A later rerun of the original upload workflow exists; recovery is forbidden');
+  const latestEvidence = validateRecoveryRunResponse(latestRun, attemptPayload, 'Latest prior workflow run');
+  const exactRun = await githubIssueJson(fetchImpl,
+    `${runUrl}/attempts/${attemptPayload.runAttempt}`, token, 'Exact prior workflow run attempt', {
+      requestTimeoutMs,
+    });
+  const runEvidence = validateRecoveryRunResponse(exactRun, attemptPayload, 'Exact prior workflow run attempt');
+  invariant(stableJson(latestEvidence) === stableJson(runEvidence),
+    'Latest and exact prior workflow run evidence do not match');
+  const { jobs, totalCount } = await listRecoveryRunJobs({
+    apiRoot,
+    runId: attemptPayload.runId,
+    runAttempt: attemptPayload.runAttempt,
+    token,
+    fetchImpl,
+    requestTimeoutMs,
+  });
+  const uploadJobs = jobs.filter((job) => job.name === SKIPPED_UPLOAD_RECOVERY_CONTRACT.jobName);
+  invariant(uploadJobs.length === 1,
+    'Prior run must contain exactly one pinned protected upload job');
+  const listedJob = uploadJobs[0];
+  const criticalSteps = validateRecoveryJobSteps(listedJob);
+  const directJob = await githubIssueJson(fetchImpl, listedJob.url, token, 'Direct prior upload job', {
+    requestTimeoutMs,
+  });
+  invariant(stableJson(directJob) === stableJson(listedJob),
+    'Direct prior upload job response does not exactly match the paginated job list');
+  validateListedJob(directJob, attemptPayload.runId, attemptPayload.runAttempt, new Set());
+  validateRecoveryJobSteps(directJob);
+  return canonicalRecoveryEvidence({
+    run: runEvidence,
+    job: {
+      jobsTotalCount: totalCount,
+      jobId: listedJob.id,
+      apiUrl: listedJob.url,
+      jobUrl: listedJob.html_url,
+      jobName: listedJob.name,
+      status: listedJob.status,
+      conclusion: listedJob.conclusion,
+      headSha: listedJob.head_sha,
+      runId: listedJob.run_id,
+      runAttempt: listedJob.run_attempt,
+      steps: criticalSteps,
+    },
+  });
 }
 
 function validateLedgerDelaySchedule(delays, confirmationDelayMs) {
@@ -724,11 +1187,9 @@ async function waitForStableRolloutLedger({
     if (!matches(scan.records)) continue;
     await sleep(confirmationDelayMs);
     const confirmation = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
-    invariant(matches(confirmation.records),
-      `${label} was not stable in the confirmation repository scan`);
-    return confirmation;
+    if (matches(confirmation.records)) return confirmation;
   }
-  throw new Error(`${label} never became visible in the bounded repository scans`);
+  throw new Error(`${label} never became visible and stable in the bounded repository scans`);
 }
 
 async function createRolloutLedger({ scan, type, input, token, fetchImpl, requestTimeoutMs }) {
@@ -752,7 +1213,10 @@ export async function claimUploadAttempt({ token, fetchImpl = fetch,
   const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
   invariant(scan.records.uploadAttempt.length === 0,
     'An upload attempt ledger already exists; an automated upload retry is forbidden');
-  invariant(scan.records.uploadSuccess.length === 0 && scan.records.submitAttempt.length === 0,
+  invariant(scan.records.uploadSuccess.length === 0
+    && scan.records.uploadResumeAttempt.length === 0
+    && scan.records.recoveryUploadSuccess.length === 0
+    && scan.records.submitAttempt.length === 0,
     'Later staged rollout ledgers exist without an upload attempt');
   const issue = await createRolloutLedger({ scan, type: 'uploadAttempt', input: identity,
     token, fetchImpl, requestTimeoutMs });
@@ -762,6 +1226,8 @@ export async function claimUploadAttempt({ token, fetchImpl = fetch,
     matches: (records) => records.uploadAttempt.length === 1
       && records.uploadAttempt[0].number === issue.number
       && records.uploadSuccess.length === 0
+      && records.uploadResumeAttempt.length === 0
+      && records.recoveryUploadSuccess.length === 0
       && records.submitAttempt.length === 0,
   });
   return { issueNumber: issue.number, issueUrl: issue.issueUrl, marker: issue.marker };
@@ -775,9 +1241,15 @@ export async function recordUploadSuccess({ token, fetchImpl = fetch,
   ...identity }) {
   const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
   invariant(scan.records.uploadAttempt.length === 1, 'Exactly one upload attempt ledger is required');
-  invariant(scan.records.uploadSuccess.length === 0, 'An upload success ledger already exists');
+  invariant(scan.records.uploadResumeAttempt.length === 0,
+    'A normal upload success cannot follow an upload resume ledger');
+  invariant(scan.records.uploadSuccess.length === 0 && scan.records.recoveryUploadSuccess.length === 0,
+    'An upload success ledger already exists');
   invariant(scan.records.submitAttempt.length === 0, 'A submit attempt cannot predate upload success');
   const attempt = scan.records.uploadAttempt[0];
+  const currentRun = rolloutRunIdentity({ repository: scan.expected.repository, ...identity });
+  assertSameRolloutRun(currentRun, attempt.marker.payload,
+    'Normal upload success run identity');
   const issue = await createRolloutLedger({ scan, type: 'uploadSuccess', input: {
     ...identity,
     uploadAttemptIssueNumber: attempt.number,
@@ -790,25 +1262,131 @@ export async function recordUploadSuccess({ token, fetchImpl = fetch,
       && records.uploadAttempt[0].number === attempt.number
       && records.uploadSuccess.length === 1
       && records.uploadSuccess[0].number === issue.number
+      && records.uploadResumeAttempt.length === 0
+      && records.recoveryUploadSuccess.length === 0
       && records.submitAttempt.length === 0,
   });
   return { issueNumber: issue.number, issueUrl: issue.issueUrl, marker: issue.marker,
     uploadAttemptIssueNumber: attempt.number, uploadAttemptIssueUrl: attempt.issueUrl };
 }
 
+export async function claimUploadResumeAttempt({ token, fetchImpl = fetch,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  visibilityDelaysMs = LEDGER_VISIBILITY_DELAYS_MS,
+  confirmationDelayMs = LEDGER_CONFIRMATION_DELAY_MS,
+  ...identity }) {
+  const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+  invariant(scan.records.uploadAttempt.length === 1,
+    'Exactly one canonical original upload-attempt/v1 ledger is required for recovery');
+  invariant(scan.records.uploadResumeAttempt.length === 0,
+    'An upload resume ledger already exists; skipped-upload recovery is one-shot');
+  invariant(scan.records.uploadSuccess.length === 0 && scan.records.recoveryUploadSuccess.length === 0,
+    'Skipped-upload recovery requires no upload-success ledger');
+  invariant(scan.records.submitAttempt.length === 0,
+    'Skipped-upload recovery requires no submit-attempt ledger');
+  const attempt = scan.records.uploadAttempt[0];
+  const currentRun = rolloutRunIdentity({ repository: scan.expected.repository, ...identity });
+  invariant(currentRun.runAttempt === 1, 'Skipped-upload recovery is restricted to workflow run attempt 1');
+  invariant(currentRun.runId !== attempt.marker.payload.runId,
+    'Skipped-upload recovery must use a separate workflow run');
+  const priorEvidence = await verifySkippedUploadRecoveryEvidence({
+    uploadAttempt: attempt, token, fetchImpl, requestTimeoutMs,
+  });
+  const issue = await createRolloutLedger({ scan, type: 'uploadResumeAttempt', input: {
+    ...identity,
+    uploadAttemptIssueNumber: attempt.number,
+    uploadAttemptIssueUrl: attempt.issueUrl,
+    priorEvidence,
+  }, token, fetchImpl, requestTimeoutMs });
+  await waitForStableRolloutLedger({
+    identity, token, fetchImpl, requestTimeoutMs, sleep, visibilityDelaysMs, confirmationDelayMs,
+    label: 'Created upload-resume-attempt ledger',
+    matches: (records) => records.uploadAttempt.length === 1
+      && records.uploadAttempt[0].number === attempt.number
+      && records.uploadResumeAttempt.length === 1
+      && records.uploadResumeAttempt[0].number === issue.number
+      && records.uploadSuccess.length === 0
+      && records.recoveryUploadSuccess.length === 0
+      && records.submitAttempt.length === 0,
+  });
+  return {
+    issueNumber: issue.number,
+    issueUrl: issue.issueUrl,
+    marker: issue.marker,
+    uploadAttemptIssueNumber: attempt.number,
+    uploadAttemptIssueUrl: attempt.issueUrl,
+    priorEvidence,
+  };
+}
+
+export async function recordRecoveryUploadSuccess({ token, fetchImpl = fetch,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  visibilityDelaysMs = LEDGER_VISIBILITY_DELAYS_MS,
+  confirmationDelayMs = LEDGER_CONFIRMATION_DELAY_MS,
+  ...identity }) {
+  const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
+  invariant(scan.records.uploadAttempt.length === 1,
+    'Exactly one canonical original upload-attempt/v1 ledger is required');
+  invariant(scan.records.uploadResumeAttempt.length === 1,
+    'Exactly one canonical upload-resume-attempt/v1 ledger is required');
+  invariant(scan.records.uploadSuccess.length === 0 && scan.records.recoveryUploadSuccess.length === 0,
+    'An upload success ledger already exists');
+  invariant(scan.records.submitAttempt.length === 0, 'A submit attempt cannot predate recovery upload success');
+  const attempt = scan.records.uploadAttempt[0];
+  const resume = scan.records.uploadResumeAttempt[0];
+  const currentRun = rolloutRunIdentity({ repository: scan.expected.repository, ...identity });
+  assertSameRolloutRun(currentRun, resume.marker.payload,
+    'Recovery upload success run identity');
+  const issue = await createRolloutLedger({ scan, type: 'recoveryUploadSuccess', input: {
+    ...identity,
+    uploadAttemptIssueNumber: attempt.number,
+    uploadAttemptIssueUrl: attempt.issueUrl,
+    uploadResumeIssueNumber: resume.number,
+    uploadResumeIssueUrl: resume.issueUrl,
+  }, token, fetchImpl, requestTimeoutMs });
+  await waitForStableRolloutLedger({
+    identity, token, fetchImpl, requestTimeoutMs, sleep, visibilityDelaysMs, confirmationDelayMs,
+    label: 'Created recovery upload-success/v2 ledger',
+    matches: (records) => records.uploadAttempt.length === 1
+      && records.uploadAttempt[0].number === attempt.number
+      && records.uploadResumeAttempt.length === 1
+      && records.uploadResumeAttempt[0].number === resume.number
+      && records.uploadSuccess.length === 0
+      && records.recoveryUploadSuccess.length === 1
+      && records.recoveryUploadSuccess[0].number === issue.number
+      && records.submitAttempt.length === 0,
+  });
+  return {
+    issueNumber: issue.number,
+    issueUrl: issue.issueUrl,
+    marker: issue.marker,
+    uploadAttemptIssueNumber: attempt.number,
+    uploadAttemptIssueUrl: attempt.issueUrl,
+    uploadResumeIssueNumber: resume.number,
+    uploadResumeIssueUrl: resume.issueUrl,
+  };
+}
+
 export async function verifyUploadLedgers({ token, fetchImpl = fetch,
   requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...identity }) {
   const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
   invariant(scan.records.uploadAttempt.length === 1, 'Exactly one canonical upload attempt ledger is required');
-  invariant(scan.records.uploadSuccess.length === 1, 'Exactly one canonical linked upload success ledger is required');
+  const successes = [...scan.records.uploadSuccess, ...scan.records.recoveryUploadSuccess];
+  invariant(successes.length === 1, 'Exactly one canonical linked upload success ledger is required');
   const attempt = scan.records.uploadAttempt[0];
-  const success = scan.records.uploadSuccess[0];
+  const resume = scan.records.uploadResumeAttempt[0];
+  const success = successes[0];
   const submit = scan.records.submitAttempt[0];
   return {
     uploadAttemptIssueNumber: attempt.number,
     uploadAttemptIssueUrl: attempt.issueUrl,
     uploadSuccessIssueNumber: success.number,
     uploadSuccessIssueUrl: success.issueUrl,
+    recoveryChain: resume !== undefined,
+    uploadResumeIssueNumber: resume?.number,
+    uploadResumeIssueUrl: resume?.issueUrl,
     submitAttemptExists: submit !== undefined,
     submitAttemptIssueNumber: submit?.number,
     submitAttemptIssueUrl: submit?.issueUrl,
@@ -823,11 +1401,12 @@ export async function claimSubmitAttempt({ token, fetchImpl = fetch,
   ...identity }) {
   const scan = await scanRolloutLedgers({ identity, token, fetchImpl, requestTimeoutMs });
   invariant(scan.records.uploadAttempt.length === 1, 'Exactly one canonical upload attempt ledger is required');
-  invariant(scan.records.uploadSuccess.length === 1, 'Exactly one canonical linked upload success ledger is required');
+  const successes = [...scan.records.uploadSuccess, ...scan.records.recoveryUploadSuccess];
+  invariant(successes.length === 1, 'Exactly one canonical linked upload success ledger is required');
   invariant(scan.records.submitAttempt.length === 0,
     'A submit attempt ledger already exists; inspect exact store status and do not retry');
   const attempt = scan.records.uploadAttempt[0];
-  const success = scan.records.uploadSuccess[0];
+  const success = successes[0];
   const issue = await createRolloutLedger({ scan, type: 'submitAttempt', input: {
     ...identity,
     uploadAttemptIssueNumber: attempt.number,
@@ -840,8 +1419,8 @@ export async function claimSubmitAttempt({ token, fetchImpl = fetch,
     label: 'Created submit-attempt ledger',
     matches: (records) => records.uploadAttempt.length === 1
       && records.uploadAttempt[0].number === attempt.number
-      && records.uploadSuccess.length === 1
-      && records.uploadSuccess[0].number === success.number
+      && records.uploadSuccess.length + records.recoveryUploadSuccess.length === 1
+      && (records.uploadSuccess[0] ?? records.recoveryUploadSuccess[0]).number === success.number
       && records.submitAttempt.length === 1
       && records.submitAttempt[0].number === issue.number,
   });
@@ -1606,7 +2185,8 @@ function parseArguments(argv) {
   const [operation, ...rest] = argv;
   invariant([
     'validate-release', 'compare-release', 'claim-attempt', 'claim-upload-attempt',
-    'record-upload-success', 'verify-upload-ledgers', 'claim-submit-attempt',
+    'record-upload-success', 'claim-upload-resume-attempt', 'record-recovery-upload-success',
+    'verify-upload-ledgers', 'claim-submit-attempt',
     'status', 'plan', 'plan-upload', 'plan-submit', 'upload-draft', 'submit-review', 'publish',
   ].includes(operation),
   'Unknown Chrome Web Store helper operation');
@@ -1655,6 +2235,19 @@ function rolloutIdentityFromOptions(options) {
   };
 }
 
+const ROLLOUT_IDENTITY_OPTION_NAMES = Object.freeze([
+  'repository', 'repository-id', 'tag', 'version', 'release-id', 'asset-id', 'asset-name',
+  'asset-size', 'tag-object', 'commit', 'sha256', 'publisher-id', 'extension-id', 'run-id',
+  'run-attempt', 'run-url', 'workflow-ref', 'workflow-sha',
+]);
+
+function requireOnlyRecoveryOptions(options, extra = []) {
+  const allowed = new Set([...ROLLOUT_IDENTITY_OPTION_NAMES, ...extra]);
+  const unexpected = Object.keys(options).filter((name) => !allowed.has(name));
+  invariant(unexpected.length === 0,
+    `Recovery operation does not accept option --${unexpected[0]}; prior run and issue IDs are derived from the canonical ledger`);
+}
+
 async function appendOutput(values) {
   const outputPath = process.env.GITHUB_OUTPUT;
   if (!outputPath) return;
@@ -1682,10 +2275,13 @@ async function main(argv) {
     const tag = requireOption(options, 'tag');
     invariant(options['event-release-id'] !== undefined || options.operation !== 'publish',
       'Manual combined publish validation is unavailable');
-    if (options['event-release-id'] === undefined && ['upload', 'submit'].includes(options.operation)) {
+    if (options['event-release-id'] === undefined
+      && ['upload', 'resume-upload', 'submit'].includes(options.operation)) {
       requireManualPublishTag(tag);
       if (options.operation === 'upload') requireUploadConfirmation(tag, options.confirmation ?? '');
-      else requireSubmitConfirmation(tag, options.confirmation ?? '');
+      else if (options.operation === 'resume-upload') {
+        requireResumeUploadConfirmation(tag, options.confirmation ?? '');
+      } else requireSubmitConfirmation(tag, options.confirmation ?? '');
     }
     const expected = {
       releaseId: options['expected-release-id'],
@@ -1762,8 +2358,13 @@ async function main(argv) {
     return;
   }
 
-  if (['claim-upload-attempt', 'record-upload-success', 'verify-upload-ledgers', 'claim-submit-attempt']
+  if (['claim-upload-attempt', 'record-upload-success', 'claim-upload-resume-attempt',
+    'record-recovery-upload-success', 'verify-upload-ledgers', 'claim-submit-attempt']
     .includes(operation)) {
+    if (operation === 'claim-upload-resume-attempt') requireOnlyRecoveryOptions(options);
+    if (operation === 'record-recovery-upload-success') requireOnlyRecoveryOptions(options, [
+      'upload-response-item-id', 'upload-response-name', 'upload-state', 'crx-version',
+    ]);
     const identity = rolloutIdentityFromOptions(options);
     let result;
     let title;
@@ -1773,6 +2374,12 @@ async function main(argv) {
     } else if (operation === 'record-upload-success') {
       result = await recordUploadSuccess({ ...identity, token: process.env.GITHUB_TOKEN });
       title = 'Chrome Web Store synchronous upload success ledger';
+    } else if (operation === 'claim-upload-resume-attempt') {
+      result = await claimUploadResumeAttempt({ ...identity, token: process.env.GITHUB_TOKEN });
+      title = 'Chrome Web Store one-shot upload resume attempt ledger';
+    } else if (operation === 'record-recovery-upload-success') {
+      result = await recordRecoveryUploadSuccess({ ...identity, token: process.env.GITHUB_TOKEN });
+      title = 'Chrome Web Store recovered synchronous upload success ledger';
     } else if (operation === 'verify-upload-ledgers') {
       result = await verifyUploadLedgers({ ...identity, token: process.env.GITHUB_TOKEN });
       title = 'Verified Chrome Web Store upload ledgers';
@@ -1787,6 +2394,9 @@ async function main(argv) {
       upload_attempt_issue_url: result.uploadAttemptIssueUrl,
       upload_success_issue_number: result.uploadSuccessIssueNumber,
       upload_success_issue_url: result.uploadSuccessIssueUrl,
+      recovery_chain: result.recoveryChain,
+      upload_resume_issue_number: result.uploadResumeIssueNumber,
+      upload_resume_issue_url: result.uploadResumeIssueUrl,
       submit_attempt_exists: result.submitAttemptExists,
       submit_attempt_issue_number: result.submitAttemptIssueNumber,
       submit_attempt_issue_url: result.submitAttemptIssueUrl,
