@@ -63,5 +63,16 @@
       "repo": "ERCs"
     },
     "reason": "Editors assigned ERC-8190; PR #1592 previously used erc-8184.md."
+  },
+  {
+    "canonical": 8392,
+    "alsoKnownAs": [
+      8391
+    ],
+    "target": {
+      "pr": 1964,
+      "repo": "ERCs"
+    },
+    "reason": "PR #1964 was assigned ERC-8392; it still uses erc-8391.md; PR #1962 claims ERC-8391."
   }
 ]

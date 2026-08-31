@@ -5820,8 +5820,8 @@
   {
     "n": 4444,
     "t": "Bound Historical Data in Execution Clients",
-    "d": "Prune historical data in clients older than one year",
-    "s": "Stagnant",
+    "d": "Prune history older than the consensus-layer block retention window",
+    "s": "Draft",
     "ty": "Standards Track",
     "c": "Networking",
     "k": "eip",
@@ -7323,7 +7323,7 @@
     "n": 5516,
     "t": "Soulbound Multi-owner Tokens",
     "d": "An interface for non-transferable, Multi-owner NFTs binding to Ethereum accounts",
-    "s": "Last Call",
+    "s": "Final",
     "ty": "Standards Track",
     "c": "ERC",
     "k": "erc",
@@ -12751,7 +12751,7 @@
     "n": 7773,
     "t": "Hardfork Meta - Glamsterdam",
     "d": "EIPs included in the Glamsterdam Ethereum network upgrade.",
-    "s": "Draft",
+    "s": "Review",
     "ty": "Meta",
     "c": "",
     "k": "eip",
@@ -14751,7 +14751,7 @@
     "n": 7945,
     "t": "Confidential Transactions Supported Token",
     "d": "Outlines a fungible token interface that hides per-account balances, boosting privacy in dApps",
-    "s": "Review",
+    "s": "Last Call",
     "ty": "Standards Track",
     "c": "ERC",
     "k": "erc",
@@ -17398,11 +17398,13 @@
     "req": [
       155,
       191,
-      1271
+      1271,
+      6492,
+      7702
     ],
     "pr": 1478,
     "prRepo": "ERCs",
-    "prRef": "9f6cf39b52b94d405dcc4e521916a0ab00f03e2a",
+    "prRef": "649132a5bc3bec184ea98dfb277575c7729fad98",
     "prHead": "slice-so/ERCs",
     "prOpened": "2026-01-16T17:16:20Z"
   },
@@ -17621,8 +17623,16 @@
       7623,
       7702,
       7708,
+      7778,
       7825,
       8037
+    ],
+    "u": [
+      {
+        "n": "Hegotá",
+        "s": "scheduled",
+        "m": 8081
+      }
     ]
   },
   {
@@ -17678,7 +17688,7 @@
   {
     "n": 8146,
     "t": "Block Access List Sidecars",
-    "d": "Propagate block access lists as sidecars, keeping payload envelopes small and giving execution clients a prefetch head start",
+    "d": "Propagate block access lists as independent sidecars, off the critical path and ahead of the execution payload",
     "s": "Draft",
     "ty": "Standards Track",
     "c": "Core",
@@ -19521,7 +19531,7 @@
     ],
     "pr": 1735,
     "prRepo": "ERCs",
-    "prRef": "0fb6d5c66779b103ff653f8404f7ce776c3f6d15",
+    "prRef": "9c0baea4ce8561b82bc418e4fade85e0b1989bea",
     "prHead": "BradMyrick/ERCs",
     "prOpened": "2026-05-09T22:22:01Z"
   },
@@ -19731,7 +19741,7 @@
     ],
     "pr": 1771,
     "prRepo": "ERCs",
-    "prRef": "ff8135a301ee661c6d43f5bf2e598843a682488d",
+    "prRef": "3f014d07a0ceac39fe6fb6dec0efdc30640a9653",
     "prHead": "JimmyShi22/ERCs",
     "prOpened": "2026-05-26T08:31:15Z"
   },
@@ -20151,10 +20161,12 @@
     "disc": "https://ethereum-magicians.org/t/eip-8298-setcodefrom-code-reuse-instruction/28779",
     "cr": "2026-06-11",
     "req": [
-      2200,
-      2929,
+      3529,
       3607,
-      7702
+      6780,
+      7702,
+      8037,
+      8038
     ]
   },
   {
@@ -20178,25 +20190,6 @@
     "prOpened": "2026-06-11T13:06:46Z"
   },
   {
-    "n": 8300,
-    "t": "Invariant-First Reserve Receipt Token",
-    "d": "An ERC-20 compatible reserve-receipt token with on-chain solvency and fee-accounting invariants enforced per transaction.",
-    "s": "Draft",
-    "ty": "Standards Track",
-    "c": "ERC",
-    "k": "erc",
-    "disc": "https://ethereum-magicians.org/t/erc-8300-invariant-first-reserve-receipt-token-ifr-peth/28753",
-    "cr": "2026-06-09",
-    "req": [
-      20
-    ],
-    "pr": 1813,
-    "prRepo": "ERCs",
-    "prRef": "6b8b5a930e2246156e3963b0a23eca288537589f",
-    "prHead": "emilianosolazzi/ERCs",
-    "prOpened": "2026-06-12T21:02:11Z"
-  },
-  {
     "n": 8301,
     "t": "AI Agent Execution",
     "d": "An on-chain execution interface for AI agent task dispatch, orchestration, and verifiable step execution",
@@ -20209,7 +20202,7 @@
     "req": [],
     "pr": 1815,
     "prRepo": "ERCs",
-    "prRef": "9fcb78c0c8f39412f87e54f82d8646654c250913",
+    "prRef": "6c5dd8eceb3db0e34c87cccc773d99a1be26091f",
     "prHead": "JimmyShi22/ERCs",
     "prOpened": "2026-06-15T11:13:05Z"
   },
@@ -20226,7 +20219,7 @@
     "req": [],
     "pr": 1817,
     "prRepo": "ERCs",
-    "prRef": "c53578044b2b6c654f5a97acccb51778012b1a65",
+    "prRef": "15e48af5c56637bceb06a0d2b9aeb62841aa1437",
     "prHead": "Cyimon/ERCs",
     "prOpened": "2026-06-16T03:39:08Z"
   },
@@ -20486,7 +20479,7 @@
     "s": "Draft",
     "ty": "Standards Track",
     "c": "Interface",
-    "k": "erc",
+    "k": "eip",
     "disc": "https://ethereum-magicians.org/t/erc-8317-contract-storage-layout-descriptor-format/28864",
     "cr": "2026-06-25",
     "req": [
@@ -20494,11 +20487,11 @@
       7730,
       8042
     ],
-    "pr": 1841,
-    "prRepo": "ERCs",
-    "prRef": "b7604a93898789eaa4fef1f0373aa6038ba49b11",
-    "prHead": "forshtat/ERCs",
-    "prOpened": "2026-06-25T20:36:27Z"
+    "pr": 12247,
+    "prRepo": "EIPs",
+    "prRef": "2d646356c092b444d47868b28d0552d97d140816",
+    "prHead": "forshtat/EIPs",
+    "prOpened": "2026-08-26T12:33:18Z"
   },
   {
     "n": 8318,
@@ -20801,7 +20794,7 @@
   {
     "n": 8337,
     "t": "Validated EVM Code",
-    "d": "Code prefixed with MAGIC bytes is proven at CREATE time to have fully static control flow and to never underflow stack.",
+    "d": "Code prefixed with MAGIC bytes is proven at CREATE time to have fully static control flow and to never underflow the data stack.",
     "s": "Draft",
     "ty": "Standards Track",
     "c": "Core",
@@ -20989,6 +20982,7 @@
     "disc": "https://ethereum-magicians.org/t/eip-8347-offline-state-migration-to-the-pbt/29089",
     "cr": "2026-07-23",
     "req": [
+      7523,
       7928,
       8159,
       8297
@@ -21012,7 +21006,7 @@
     ],
     "pr": 1907,
     "prRepo": "ERCs",
-    "prRef": "17e492fe43820463b2c9231b1e65ac7faf6a8d5f",
+    "prRef": "0f8d995241c690a967ebc41ea01dc9fc3735afb6",
     "prHead": "javierpmateos/ERCs",
     "prOpened": "2026-07-23T15:26:46Z"
   },
@@ -21028,12 +21022,7 @@
     "cr": "2026-07-25",
     "req": [
       165
-    ],
-    "pr": 1909,
-    "prRepo": "ERCs",
-    "prRef": "39518301b524bd6eca1387c19e0a60feb5cdc772",
-    "prHead": "Arhemius/ERCs",
-    "prOpened": "2026-07-25T14:07:20Z"
+    ]
   },
   {
     "n": 8350,
@@ -21047,11 +21036,12 @@
     "cr": "2026-07-14",
     "req": [
       712,
-      1271
+      1271,
+      7702
     ],
     "pr": 1910,
     "prRepo": "ERCs",
-    "prRef": "cb51eaf2d42e85df5b284e923b09a18dc3530039",
+    "prRef": "708e8130a32a525ed001225925aeed04905cb98f",
     "prHead": "everest-an/ERCs",
     "prOpened": "2026-07-26T07:48:06Z"
   },
@@ -21091,7 +21081,7 @@
     "req": [],
     "pr": 1914,
     "prRepo": "ERCs",
-    "prRef": "9da43f746753b241aadaa32c68fdc10f71e027fb",
+    "prRef": "8598e750efda8b51d228b92b66ee79cc8cc6e710",
     "prHead": "nicolasassouad/ERCs",
     "prOpened": "2026-07-27T18:28:26Z"
   },
@@ -21124,14 +21114,12 @@
     "cr": "2026-07-16",
     "req": [
       165,
+      712,
+      721,
+      1271,
       7812,
       8004
-    ],
-    "pr": 1919,
-    "prRepo": "ERCs",
-    "prRef": "f460c01c91f6032178d03c948a918a30231e37bb",
-    "prHead": "mzf11125/mzf11125-ERCs",
-    "prOpened": "2026-07-30T05:24:02Z"
+    ]
   },
   {
     "n": 8355,
@@ -21192,7 +21180,7 @@
     ],
     "pr": 12055,
     "prRepo": "EIPs",
-    "prRef": "b0397b3d421e261ad0bd8c5ee5fc4cef221e1d73",
+    "prRef": "d010b95a2b37f4c64ba89af34d1f66b0d6ce6384",
     "prHead": "lucadonnoh/EIPs",
     "prOpened": "2026-07-31T11:25:16Z"
   },
@@ -21439,7 +21427,7 @@
     ],
     "pr": 1930,
     "prRepo": "ERCs",
-    "prRef": "4fa896788f4b29b6bceac931449b7f5ae2ca1867",
+    "prRef": "c72a0fa8bc5d42e5fd8af00aa06fe00c96135be9",
     "prHead": "adn-ia/ERCs",
     "prOpened": "2026-08-05T08:41:03Z"
   },
@@ -21485,7 +21473,7 @@
     "req": [],
     "pr": 1932,
     "prRepo": "ERCs",
-    "prRef": "c9c2c299b14674fb2c05b4659e7257148061e32a",
+    "prRef": "b25dc76e4f42f825a62bf0c517e58a95193cffde",
     "prHead": "TMerlini/ERCs",
     "prOpened": "2026-08-06T10:42:31Z"
   },
@@ -21544,7 +21532,7 @@
     ],
     "pr": 1942,
     "prRepo": "ERCs",
-    "prRef": "082d40053b97af31795e7a2cbb19f4909f748055",
+    "prRef": "6c8026d75a53b768a1ae725bca4003c930afea49",
     "prHead": "Cybercentry/ERCs",
     "prOpened": "2026-08-13T06:52:43Z"
   },
@@ -21564,7 +21552,7 @@
     ],
     "pr": 1935,
     "prRepo": "ERCs",
-    "prRef": "2112d2ca2dd567f0e68b443222162dc8200c0fa1",
+    "prRef": "d33d51ef2b5d503692d6dd6208c76b017ffe3de0",
     "prHead": "zexoverz/ERCs",
     "prOpened": "2026-08-08T04:30:56Z"
   },
@@ -21625,7 +21613,7 @@
     ],
     "pr": 1953,
     "prRepo": "ERCs",
-    "prRef": "625da1269c1b17c726eeb1d15f314a0cce6e74be",
+    "prRef": "e1da991a00fe7297a15482b9df0a15d2569eb382",
     "prHead": "mzf11125/mzf11125-ERCs",
     "prOpened": "2026-08-16T19:32:19Z"
   },
@@ -21750,6 +21738,236 @@
     "prOpened": "2026-08-21T12:27:37Z"
   },
   {
+    "n": 8390,
+    "t": "Remove the Sync Committee",
+    "d": "Remove the onchain Altair sync committee and its rewards, superseded by offchain ZK proofs",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/eip-8390-remove-the-sync-committee/29486",
+    "cr": "2026-08-22",
+    "req": []
+  },
+  {
+    "n": 8391,
+    "t": "Execution Delegation Framework",
+    "d": "An interface and integration models for delegating execution authority.",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "ERC",
+    "k": "erc",
+    "disc": "https://ethereum-magicians.org/t/erc-8391-execution-delegation-framework/29527",
+    "cr": "2026-06-26",
+    "req": [
+      1271,
+      5313
+    ],
+    "pr": 1962,
+    "prRepo": "ERCs",
+    "prRef": "ad51a09701e2ee7b95390091eb920df19466b2a7",
+    "prHead": "F4ever/ERCs",
+    "prOpened": "2026-08-23T15:17:14Z"
+  },
+  {
+    "n": 8392,
+    "t": "Asset Status Interface for Tokenized Assets",
+    "d": "Token-level lifecycle, reference-market, valuation, and primary-window status discovery for tokenized real-world assets",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "ERC",
+    "k": "erc",
+    "disc": "https://ethereum-magicians.org/t/erc-8391-asset-status-interface-for-tokenized-assets/29489",
+    "cr": "2026-08-23",
+    "req": [
+      20,
+      165
+    ],
+    "pr": 1964,
+    "prRepo": "ERCs",
+    "prRef": "bb1cb9a41720ac5960f16296c8898a8feb41bbc3",
+    "prHead": "econoar/ERCs",
+    "prOpened": "2026-08-24T02:05:30Z",
+    "prFileN": 8391,
+    "aka": [
+      8391
+    ]
+  },
+  {
+    "n": 8393,
+    "t": "Tokenized Carbon Credits with Retirement",
+    "d": "An ERC-1155 extension for carbon credits with project/credit identifiers, registry-aligned metadata, and irreversible retirement.",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "ERC",
+    "k": "erc",
+    "disc": "https://ethereum-magicians.org/t/erc-8393-tokenized-carbon-credits-with-retirement/29488",
+    "cr": "2026-08-24",
+    "req": [
+      165,
+      1155
+    ],
+    "pr": 1965,
+    "prRepo": "ERCs",
+    "prRef": "9c9f59a2c5a0f2c3f0322bbfff20b0aa7820733a",
+    "prHead": "sehyun-wincl/ERCs",
+    "prOpened": "2026-08-24T02:05:38Z"
+  },
+  {
+    "n": 8395,
+    "t": "Delegated Signed HTTP Requests",
+    "d": "Delegation Grants for ERC-8128 authenticated requests",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "ERC",
+    "k": "erc",
+    "disc": "https://ethereum-magicians.org/t/erc-8395-signed-http-requests-with-ethereum/29514",
+    "cr": "2026-08-04",
+    "req": [
+      155,
+      191,
+      712,
+      1271,
+      6492,
+      7702,
+      8128
+    ],
+    "pr": 1967,
+    "prRepo": "ERCs",
+    "prRef": "49bfae61c8ef3140f46e7e51c78650f33cf3e837",
+    "prHead": "slice-so/ERCs",
+    "prOpened": "2026-08-24T21:18:23Z"
+  },
+  {
+    "n": 8397,
+    "t": "Frame Authenticator Signatures",
+    "d": "Adds a bounded, state-independent custom-authentication signature scheme to frame transactions.",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/eip-8397-frame-authenticator-signatures/29517",
+    "cr": "2026-08-26",
+    "req": [
+      2929,
+      7702,
+      7928,
+      8141
+    ],
+    "pr": 12244,
+    "prRepo": "EIPs",
+    "prRef": "9b0fa8dca30bf13510be19171a3237c5c02eef95",
+    "prHead": "leekt/EIPs",
+    "prOpened": "2026-08-26T08:17:43Z"
+  },
+  {
+    "n": 8398,
+    "t": "Portable Account Keystore",
+    "d": "Define portable account actors and authenticators",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/composable-native-account-abstraction/29526",
+    "cr": "2026-08-27",
+    "req": [
+      155,
+      712,
+      1014,
+      1271,
+      6780
+    ],
+    "pr": 12248,
+    "prRepo": "EIPs",
+    "prRef": "ad899b46494932fc39a3e5a96fc59ed6312b3ab9",
+    "prHead": "pedrouid/EIPs",
+    "prOpened": "2026-08-27T05:03:31Z"
+  },
+  {
+    "n": 8399,
+    "t": "Native Account Abstraction Transactions",
+    "d": "Add a native transaction for portable Keystore accounts",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/composable-native-account-abstraction/29526",
+    "cr": "2026-08-27",
+    "req": [
+      155,
+      170,
+      1559,
+      2028,
+      2718,
+      2929,
+      7702,
+      7708,
+      8398
+    ],
+    "pr": 12248,
+    "prRepo": "EIPs",
+    "prRef": "ad899b46494932fc39a3e5a96fc59ed6312b3ab9",
+    "prHead": "pedrouid/EIPs",
+    "prOpened": "2026-08-27T05:03:31Z"
+  },
+  {
+    "n": 8400,
+    "t": "Advanced Account Controls",
+    "d": "Extend native AA with policies, locking, and nonce-free transactions",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "Core",
+    "k": "eip",
+    "disc": "https://ethereum-magicians.org/t/composable-native-account-abstraction/29526",
+    "cr": "2026-08-27",
+    "req": [
+      8398,
+      8399
+    ],
+    "pr": 12248,
+    "prRepo": "EIPs",
+    "prRef": "ad899b46494932fc39a3e5a96fc59ed6312b3ab9",
+    "prHead": "pedrouid/EIPs",
+    "prOpened": "2026-08-27T05:03:31Z"
+  },
+  {
+    "n": 8403,
+    "t": "Frame Account Authority Lifecycle",
+    "d": "A committed-root add, rotate, and revoke model for frame-transaction account authorities, checked in the account's own frame",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "ERC",
+    "k": "erc",
+    "disc": "https://ethereum-magicians.org/t/erc-frame-account-authority-lifecycle/24001",
+    "cr": "2026-08-29",
+    "req": [
+      8141,
+      8272
+    ],
+    "pr": 1979,
+    "prRepo": "ERCs",
+    "prRef": "552ca319aefe716623ae6e8b887305f5f90c96d6",
+    "prHead": "AnkushinDaniil/ERCs",
+    "prOpened": "2026-08-29T11:15:35Z"
+  },
+  {
+    "n": 8404,
+    "t": "Recomputable Verification Receipts",
+    "d": "A six-field receipt using content-addressed claim, evidence-set, profile, and result identities.",
+    "s": "Draft",
+    "ty": "Standards Track",
+    "c": "ERC",
+    "k": "erc",
+    "disc": "https://ethereum-magicians.org/t/erc-8404-recomputable-verification-receipts/29521",
+    "cr": "2026-08-29",
+    "req": [],
+    "pr": 1980,
+    "prRepo": "ERCs",
+    "prRef": "7a9e63a80bce04db53c6550103c1d41eca35f3d1",
+    "prHead": "pipavlo82/ERCs",
+    "prOpened": "2026-08-29T23:51:53Z"
+  },
+  {
     "n": 9000,
     "t": "Grant CROPS Builders (Protocol Guild Members) Transfer Rights Over Milady Maker Tokens",
     "d": "",
@@ -21768,19 +21986,27 @@
   },
   {
     "n": 9999,
-    "t": "Remove the Sync Committee",
-    "d": "Remove the onchain Altair sync committee and its rewards, superseded by offchain ZK proofs",
+    "t": "Post-quantum-ready deposit contract",
+    "d": "Adds a variable-length validator deposit contract with an irreversible BLS retirement mode.",
     "s": "Draft",
     "ty": "Standards Track",
     "c": "Core",
     "k": "eip",
-    "disc": "https://ethereum-magicians.org/t/eip-9999-remove-the-sync-committee/29500",
-    "cr": "2026-08-22",
-    "req": [],
-    "pr": 12228,
+    "disc": "",
+    "cr": "2026-08-23",
+    "req": [
+      6110,
+      7251,
+      7495,
+      7685,
+      7688,
+      7916,
+      7997
+    ],
+    "pr": 12235,
     "prRepo": "EIPs",
-    "prRef": "0900d3d866e8880148689cca12ee53bad22bfe63",
-    "prHead": "dapplion/EIPs",
-    "prOpened": "2026-08-22T11:38:47Z"
+    "prRef": "344f280c981f99cbd7044866e60309ea0d8c42d7",
+    "prHead": "kevaundray/EIPs",
+    "prOpened": "2026-08-24T15:06:36Z"
   }
 ]
