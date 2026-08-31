@@ -282,7 +282,7 @@ try {
       `${extensionPage} shows bundled database status and both manual actions`,
       databaseUi.heading === 'Database' &&
         databaseUi.source === 'Bundled fallback' &&
-        databaseUi.version === '2026082402' &&
+        databaseUi.version === '2026083101' &&
         databaseUi.lastCheck === 'Never' &&
         databaseUi.autoChecked === true &&
         !['—', 'Scheduling…', 'Disabled'].includes(databaseUi.nextCheck) &&
@@ -867,7 +867,7 @@ try {
     'valid signed response activates through the real settings UI',
     !!updateSuccess &&
       activatedUi.source === 'Downloaded and signature-verified' &&
-      activatedUi.version === '2026082402' &&
+      activatedUi.version === '2026083101' &&
       activatedUi.restoreDisabled === false &&
       activatedUi.role === 'status',
     JSON.stringify({ updateSuccess, activatedUi }),
@@ -889,7 +889,7 @@ try {
   );
   check(
     'concurrently open settings surface refreshes after activation',
-    concurrentActivatedUi?.version === '2026082402' && concurrentActivatedUi.restoreDisabled === false,
+    concurrentActivatedUi?.version === '2026083101' && concurrentActivatedUi.restoreDisabled === false,
     JSON.stringify(concurrentActivatedUi),
   );
   const contentStorageEvents = await evaluateInContentContext(
